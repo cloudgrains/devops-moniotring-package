@@ -1,0 +1,171 @@
+# Reference copy of Prometheus alert rules.
+# These rules are rendered from templates/_alert_rules.tpl and deployed
+# automatically (either embedded in the Prometheus ConfigMap or as a
+# PrometheusRule CRD, depending on your configuration).
+#
+# You can apply this file directly to an external Prometheus:
+#   kubectl create configmap extra-rules \
+#     --from-file=website-alerts.yaml -n monitoring
+
+groups:
+  # ── Website availability ──────────────────────────────────────────────────
+  - name: website-availability
+    interval: 60s
+    rules:
+      - alert: WebsiteDown
+        expr: probe_success{job=~"blackbox-http.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          type: availability
+        annotations:
+          summary: "Website down: {{ $labels.instance }}"
+          description: >
+            {{ $labels.instance }} has been unreachable for more than 2 minutes.
+          runbook: "Check DNS, firewall, and origin server health."
+
+      - alert: SlowResponseTimeWarning
+        expr: probe_duration_seconds{job=~"blackbox-http.*"} > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          type: performance
+        annotations:
+          summary: "Slow response: {{ $labels.instance }}"
+          description: >
+            {{ $labels.instance }} response time is {{ $value | printf "%.2f" }}s
+            (threshold: 2s).
+
+      - alert: SlowResponseTimeCritical
+        expr: probe_duration_seconds{job=~"blackbox-http.*"} > 5.0
+        for: 2m
+        labels:
+          severity: critical
+          type: performance
+        annotations:
+          summary: "Critical response time: {{ $labels.instance }}"
+          description: >
+            {{ $labels.instance }} response time is {{ $value | printf "%.2f" }}s
+            (threshold: 5s).
+
+      - alert: UnexpectedHTTPStatus
+        expr: >
+          probe_http_status_code{job=~"blackbox-http.*"} != 200
+          and probe_http_status_code{job=~"blackbox-http.*"} != 0
+          and probe_http_status_code{job=~"blackbox-http.*"} != 301
+          and probe_http_status_code{job=~"blackbox-http.*"} != 302
+        for: 5m
+        labels:
+          severity: warning
+          type: availability
+        annotations:
+          summary: "Unexpected HTTP status: {{ $labels.instance }}"
+          description: "{{ $labels.instance }} returned HTTP {{ $value }}."
+
+  # ── SSL certificates ───────────────────────────────────────────────────────
+  - name: ssl-certificates
+    interval: 300s
+    rules:
+      - alert: SSLCertExpiringSoon
+        expr: >
+          (probe_ssl_earliest_cert_expiry{job="blackbox-ssl"} - time()) / 86400
+          < 30
+        for: 1h
+        labels:
+          severity: warning
+          type: ssl
+        annotations:
+          summary: "SSL cert expiring: {{ $labels.instance }}"
+          description: >
+            SSL certificate for {{ $labels.instance }} expires in
+            {{ $value | printf "%.0f" }} days (warning: < 30 days).
+          runbook: "Renew the SSL certificate before expiry."
+
+      - alert: SSLCertExpiringCritical
+        expr: >
+          (probe_ssl_earliest_cert_expiry{job="blackbox-ssl"} - time()) / 86400
+          < 7
+        for: 30m
+        labels:
+          severity: critical
+          type: ssl
+        annotations:
+          summary: "SSL cert critically close to expiry: {{ $labels.instance }}"
+          description: >
+            SSL certificate for {{ $labels.instance }} expires in
+            {{ $value | printf "%.0f" }} days! Immediate renewal required.
+
+      - alert: SSLCertExpired
+        expr: >
+          (probe_ssl_earliest_cert_expiry{job="blackbox-ssl"} - time()) / 86400
+          <= 0
+        for: 0m
+        labels:
+          severity: critical
+          type: ssl
+        annotations:
+          summary: "SSL cert EXPIRED: {{ $labels.instance }}"
+          description: >
+            SSL certificate for {{ $labels.instance }} has EXPIRED.
+            Users are seeing security warnings. Renew immediately.
+
+      - alert: SSLProbeFailed
+        expr: probe_success{job="blackbox-ssl"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          type: ssl
+        annotations:
+          summary: "SSL probe failed: {{ $labels.instance }}"
+          description: >
+            Cannot establish TLS connection to {{ $labels.instance }}.
+
+  # ── TCP / DNS / ICMP ───────────────────────────────────────────────────────
+  - name: tcp-dns-icmp
+    interval: 60s
+    rules:
+      - alert: TCPConnectionFailed
+        expr: probe_success{job="blackbox-tcp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          type: connectivity
+        annotations:
+          summary: "TCP connection failed: {{ $labels.instance }}"
+          description: "Cannot connect to {{ $labels.instance }} via TCP."
+
+      - alert: DNSResolutionFailed
+        expr: probe_success{job="blackbox-dns"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          type: dns
+        annotations:
+          summary: "DNS resolution failed: {{ $labels.instance }}"
+          description: "DNS resolution failed for {{ $labels.instance }}."
+
+      - alert: ICMPProbeFailed
+        expr: probe_success{job="blackbox-icmp"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          type: connectivity
+        annotations:
+          summary: "Ping failed: {{ $labels.instance }}"
+          description: "ICMP probe to {{ $labels.instance }} is failing."
+
+  # ── Internal health ────────────────────────────────────────────────────────
+  - name: monitoring-pack-health
+    interval: 60s
+    rules:
+      - alert: BlackboxExporterDown
+        expr: up{job="blackbox-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          type: internal
+        annotations:
+          summary: "Blackbox Exporter is down"
+          description: >
+            The Blackbox Exporter is unreachable.
+            All website probes have stopped.

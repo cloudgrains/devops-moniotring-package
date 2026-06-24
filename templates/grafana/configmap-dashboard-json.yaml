@@ -1,0 +1,16 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-pack.grafana.fullname" . }}-dashboard-json
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+    {{- with .Values.grafana.dashboardLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  website-monitoring.json: |
+    {{- .Files.Get "files/dashboards/website-monitoring.json" | nindent 4 }}
+{{- end }}

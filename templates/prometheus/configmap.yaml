@@ -1,0 +1,243 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-pack.prometheus.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  # ── Main prometheus configuration ─────────────────────────────────────────
+  prometheus.yml: |
+    global:
+      scrape_interval:     {{ .Values.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.prometheus.evaluationInterval }}
+      scrape_timeout:      {{ .Values.prometheus.scrapeTimeout }}
+      external_labels:
+        cluster: {{ .Release.Name | quote }}
+        namespace: {{ include "monitoring-pack.namespace" . | quote }}
+
+    # Alert rules loaded from the rules directory
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    # Alertmanager connection
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - {{ include "monitoring-pack.alertmanager.address" . }}
+          timeout: 10s
+          api_version: v2
+
+    scrape_configs:
+
+      # ── Self-monitoring ──────────────────────────────────────────────────────
+
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      {{- if .Values.blackboxExporter.enabled }}
+      - job_name: blackbox-exporter
+        static_configs:
+          - targets:
+              - {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+
+      {{- if .Values.alertmanager.enabled }}
+      - job_name: alertmanager
+        static_configs:
+          - targets:
+              - {{ include "monitoring-pack.alertmanager.address" . }}
+      {{- end }}
+
+      # ── HTTP / HTTPS website probes ──────────────────────────────────────────
+      {{- if and .Values.blackboxExporter.enabled .Values.targets }}
+
+      {{- /* Collect targets using default module + default interval into one job */}}
+      {{- $defaultTargets := list }}
+      {{- range .Values.targets }}
+      {{- $isDefaultModule := or (not .module) (eq .module "http_2xx") }}
+      {{- $isDefaultInterval := or (not .interval) (eq .interval $.Values.prometheus.scrapeInterval) }}
+      {{- if and $isDefaultModule $isDefaultInterval }}
+      {{- $defaultTargets = append $defaultTargets .url }}
+      {{- end }}
+      {{- end }}
+      {{- if $defaultTargets }}
+      - job_name: blackbox-http
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        static_configs:
+          - targets:
+            {{- range $defaultTargets }}
+              - {{ . | quote }}
+            {{- end }}
+            labels:
+              probe_type: http
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+
+      {{- /* Per-target jobs for custom module OR custom interval */}}
+      {{- range .Values.targets }}
+      {{- $isDefaultModule := or (not .module) (eq .module "http_2xx") }}
+      {{- $isDefaultInterval := or (not .interval) (eq $.Values.prometheus.scrapeInterval .interval) }}
+      {{- if not (and $isDefaultModule $isDefaultInterval) }}
+      - job_name: blackbox-http-{{ .name | lower | replace " " "-" }}
+        metrics_path: /probe
+        {{- if and .interval (ne .interval $.Values.prometheus.scrapeInterval) }}
+        scrape_interval: {{ .interval }}
+        {{- end }}
+        params:
+          module: [{{ default "http_2xx" .module }}]
+        static_configs:
+          - targets:
+              - {{ .url | quote }}
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+      {{- end }}
+      {{- end }}
+
+      {{- /* SSL expiry probe — only rendered when there are HTTPS targets */}}
+      {{- $httpsTargets := list }}
+      {{- range .Values.targets }}
+      {{- if hasPrefix "https://" .url }}
+      {{- $httpsTargets = append $httpsTargets .url }}
+      {{- end }}
+      {{- end }}
+      {{- if $httpsTargets }}
+      - job_name: blackbox-ssl
+        metrics_path: /probe
+        params:
+          module: [ssl_expiry]
+        static_configs:
+          - targets:
+            {{- range $httpsTargets }}
+              - {{ . | quote }}
+            {{- end }}
+            labels:
+              probe_type: ssl
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+      {{- end }}
+
+      # ── TCP probes ───────────────────────────────────────────────────────────
+      {{- if and .Values.blackboxExporter.enabled .Values.tcpTargets }}
+      - job_name: blackbox-tcp
+        metrics_path: /probe
+        params:
+          module: [tcp_connect]
+        static_configs:
+          - targets:
+            {{- range .Values.tcpTargets }}
+              - {{ .host | quote }}
+            {{- end }}
+            labels:
+              probe_type: tcp
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+
+      # ── DNS probes ───────────────────────────────────────────────────────────
+      {{- if and .Values.blackboxExporter.enabled .Values.dnsTargets }}
+      - job_name: blackbox-dns
+        metrics_path: /probe
+        params:
+          module: [dns_check]
+        static_configs:
+          - targets:
+            {{- range .Values.dnsTargets }}
+              - {{ .host | quote }}
+            {{- end }}
+            labels:
+              probe_type: dns
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+
+      # ── ICMP / Ping probes ───────────────────────────────────────────────────
+      {{- if and .Values.blackboxExporter.enabled .Values.icmpTargets }}
+      - job_name: blackbox-icmp
+        metrics_path: /probe
+        params:
+          module: [icmp]
+        static_configs:
+          - targets:
+            {{- range .Values.icmpTargets }}
+              - {{ .host | quote }}
+            {{- end }}
+            labels:
+              probe_type: icmp
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+      {{- end }}
+
+      # ── Kubernetes service discovery (optional bonus scrapes) ────────────────
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape pods with the prometheus.io/scrape annotation
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: "$1:$2"
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: kubernetes_pod_name
+
+      {{- if .Values.prometheus.extraScrapeConfigs }}
+      # ── Extra scrape configs (from values.yaml) ──────────────────────────────
+      {{- range .Values.prometheus.extraScrapeConfigs }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- end }}
+
+  # ── Alert rules (shared template — see templates/_alert_rules.tpl) ───────────
+  website-alerts.yml: |
+    groups:
+    {{- include "monitoring-pack.alertGroups" . | nindent 4 }}
+{{- end }}

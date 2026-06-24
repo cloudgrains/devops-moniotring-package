@@ -1,0 +1,25 @@
+{{- if .Values.grafana.enabled }}
+# Dashboard provisioning config — tells Grafana where to find dashboard JSON files
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-pack.grafana.fullname" . }}-dashboard-provider
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: monitoring-pack
+        orgId: 1
+        type: file
+        disableDeletion: true
+        editable: true
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: true
+{{- end }}

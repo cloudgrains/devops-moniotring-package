@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install yamllint
+        run: pip install yamllint==1.35.1
+
+      - name: Lint YAML files
+        run: yamllint -f github -c .yamllint.yml values.yaml Chart.yaml .github/
+
+      - name: Helm lint (strict)
+        run: helm lint --strict .
+
+      - name: Render — standalone mode (default values)
+        run: helm template website-monitor . --debug > /dev/null
+
+      - name: Render — operator mode (ServiceMonitor + PrometheusRule + Probe)
+        run: |
+          helm template website-monitor . \
+            --set prometheus.enabled=false \
+            --set grafana.enabled=false \
+            --set alertmanager.enabled=false \
+            --set serviceMonitor.enabled=true \
+            --set serviceMonitor.labels.release=kube-prometheus-stack \
+            --set prometheusRule.enabled=true \
+            --set prometheusRule.labels.release=kube-prometheus-stack \
+            --set probe.enabled=true \
+            --debug > /dev/null
+
+      - name: Render — all notifications enabled
+        run: |
+          helm template website-monitor . \
+            --set notifications.slack.enabled=true \
+            --set notifications.slack.webhookUrl=https://hooks.slack.com/test \
+            --set notifications.email.enabled=true \
+            --set notifications.email.username=user \
+            --set notifications.email.password=pass \
+            --set notifications.discord.enabled=true \
+            --set notifications.discord.webhookUrl=https://discord.com/api/webhooks/test/slack \
+            --set notifications.teams.enabled=true \
+            --set notifications.teams.webhookUrl=https://outlook.office.com/webhook/test \
+            --set notifications.telegram.enabled=true \
+            --set notifications.telegram.botToken=123:abc \
+            --set notifications.telegram.chatId=-100 \
+            --debug > /dev/null
+
+      - name: Render — Ingress, NetworkPolicy, PodDisruptionBudget
+        run: |
+          helm template website-monitor . \
+            --set grafana.ingress.enabled=true \
+            --set grafana.ingress.host=grafana.test.com \
+            --set prometheus.ingress.enabled=true \
+            --set prometheus.ingress.host=prometheus.test.com \
+            --set networkPolicy.enabled=true \
+            --set podDisruptionBudget.enabled=true \
+            --debug > /dev/null
+
+      - name: Render — existingSecret for Grafana
+        run: |
+          helm template website-monitor . \
+            --set grafana.existingSecret=my-grafana-secret \
+            --debug > /dev/null
+
+      - name: Render — ICMP privileged mode
+        run: |
+          helm template website-monitor . \
+            --set blackboxExporter.privileged=true \
+            --debug > /dev/null
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: lint
+    # Only run full integration tests on push to main to save CI minutes
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          version: v0.23.0
+          kubectl_version: v1.30.0
+
+      - name: Create monitoring namespace
+        run: kubectl create namespace monitoring
+
+      - name: Install chart (persistence disabled for CI speed)
+        run: |
+          helm install website-monitor . \
+            --namespace monitoring \
+            --set prometheus.persistence.enabled=false \
+            --set grafana.persistence.enabled=false \
+            --set alertmanager.persistence.enabled=false \
+            --wait \
+            --timeout 5m
+
+      - name: Show deployed resources
+        run: kubectl get all -n monitoring
+
+      - name: Run Helm tests
+        run: helm test website-monitor --namespace monitoring --timeout 3m --logs
+
+      - name: Cleanup
+        if: always()
+        run: helm uninstall website-monitor --namespace monitoring --ignore-not-found

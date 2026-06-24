@@ -1,0 +1,141 @@
+{{- if and .Values.probe.enabled .Values.blackboxExporter.enabled }}
+{{- $proberUrl := include "monitoring-pack.probe.proberUrl" . }}
+{{- if .Values.targets }}
+---
+# Probe CRD — native Prometheus Operator approach for Blackbox monitoring.
+# Requires prometheus-operator v0.47+ (kube-prometheus-stack >= 16).
+# More details: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#probe
+#
+# HTTP/HTTPS targets
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-http
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: {{ .Values.probe.interval }}
+  scrapeTimeout: {{ .Values.probe.scrapeTimeout }}
+  module: http_2xx
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        {{- range .Values.targets }}
+        - {{ .url | quote }}
+        {{- end }}
+      labels:
+        probe_type: http
+        {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- $httpsTargets := list }}
+{{- range .Values.targets }}
+{{- if hasPrefix "https://" .url }}
+{{- $httpsTargets = append $httpsTargets . }}
+{{- end }}
+{{- end }}
+{{- if $httpsTargets }}
+---
+# SSL certificate expiry probes (https:// targets only)
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-ssl
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: "300s"
+  scrapeTimeout: {{ .Values.probe.scrapeTimeout }}
+  module: ssl_expiry
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        {{- range $httpsTargets }}
+        - {{ .url | quote }}
+        {{- end }}
+      labels:
+        probe_type: ssl
+        {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- if .Values.tcpTargets }}
+---
+# TCP targets
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-tcp
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: {{ .Values.probe.interval }}
+  scrapeTimeout: {{ .Values.probe.scrapeTimeout }}
+  module: tcp_connect
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        {{- range .Values.tcpTargets }}
+        - {{ .host | quote }}
+        {{- end }}
+      labels:
+        probe_type: tcp
+        {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- if .Values.icmpTargets }}
+---
+# ICMP targets
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-icmp
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: {{ .Values.probe.interval }}
+  scrapeTimeout: {{ .Values.probe.scrapeTimeout }}
+  module: icmp
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        {{- range .Values.icmpTargets }}
+        - {{ .host | quote }}
+        {{- end }}
+      labels:
+        probe_type: icmp
+        {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-test
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-weight": "0"
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: test
+      image: curlimages/curl:8.5.0
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          PASS=0
+          FAIL=0
+
+          check() {
+            local name="$1"
+            local url="$2"
+            printf "  Testing %-20s ... " "$name"
+            if curl -sf --max-time 15 --retry 3 --retry-delay 5 "$url" > /dev/null 2>&1; then
+              echo "PASS"
+              PASS=$((PASS + 1))
+            else
+              echo "FAIL"
+              FAIL=$((FAIL + 1))
+            fi
+          }
+
+          echo ""
+          echo "=== Monitoring Pack Connectivity Tests ==="
+          echo ""
+
+          {{- if .Values.prometheus.enabled }}
+          check "Prometheus" \
+            "http://{{ include "monitoring-pack.prometheus.fullname" . }}.{{ include "monitoring-pack.namespace" . }}.svc:{{ .Values.prometheus.service.port }}/-/healthy"
+          {{- end }}
+
+          {{- if .Values.grafana.enabled }}
+          check "Grafana" \
+            "http://{{ include "monitoring-pack.grafana.fullname" . }}.{{ include "monitoring-pack.namespace" . }}.svc:{{ .Values.grafana.service.port }}/api/health"
+          {{- end }}
+
+          {{- if .Values.alertmanager.enabled }}
+          check "Alertmanager" \
+            "http://{{ include "monitoring-pack.alertmanager.fullname" . }}.{{ include "monitoring-pack.namespace" . }}.svc:{{ .Values.alertmanager.service.port }}/-/healthy"
+          {{- end }}
+
+          {{- if .Values.blackboxExporter.enabled }}
+          check "Blackbox Exporter" \
+            "http://{{ include "monitoring-pack.blackbox.fullname" . }}.{{ include "monitoring-pack.namespace" . }}.svc:{{ .Values.blackboxExporter.service.port }}/health"
+          {{- end }}
+
+          echo ""
+          echo "Results: $PASS passed, $FAIL failed"
+          echo ""
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo "ERROR: $FAIL component(s) failed health checks."
+            echo "Run 'kubectl get pods -n {{ include "monitoring-pack.namespace" . }}' to check pod status."
+            exit 1
+          fi
+
+          echo "All components are healthy."

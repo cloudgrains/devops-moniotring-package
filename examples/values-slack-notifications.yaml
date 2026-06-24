@@ -1,0 +1,67 @@
+# Slack + Telegram notification example.
+# Shows how to configure multiple notification channels side by side.
+#
+# Install:
+#   helm install monitor monitoring-pack \
+#     -f examples/values-slack-notifications.yaml \
+#     --set notifications.slack.webhookUrl="https://hooks.slack.com/services/..." \
+#     --set notifications.telegram.botToken="1234567890:AAF..." \
+#     --set notifications.telegram.chatId="-1001234567890"
+
+targets:
+  - name: My Website
+    url: https://example.com
+  - name: My API
+    url: https://api.example.com
+
+notifications:
+  # ── Slack ──────────────────────────────────────────────────────────────────
+  # 1. Create an app at https://api.slack.com/apps
+  # 2. Add Incoming Webhooks, create a webhook for your channel
+  # 3. Copy the webhook URL below
+  slack:
+    enabled: true
+    webhookUrl: ""   # Paste your Slack Incoming Webhook URL here (never commit the real URL)
+    channel: "#website-alerts"
+    username: "Monitoring Pack"
+    iconEmoji: ":rotating_light:"
+
+  # ── Telegram ───────────────────────────────────────────────────────────────
+  # 1. Message @BotFather → /newbot → copy the token
+  # 2. Add the bot to your group/channel
+  # 3. Get the chat ID: https://api.telegram.org/bot<TOKEN>/getUpdates
+  telegram:
+    enabled: true
+    botToken: "1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    chatId: "-1001234567890"   # Negative number for groups/channels
+
+  # ── Discord ────────────────────────────────────────────────────────────────
+  # 1. Server Settings → Integrations → Webhooks → New Webhook
+  # 2. Copy URL and append /slack at the end:
+  #    https://discord.com/api/webhooks/.../.../slack
+  discord:
+    enabled: false
+    webhookUrl: "https://discord.com/api/webhooks/000000000/XXXXXXXXXXXXX/slack"
+
+  # ── Microsoft Teams ────────────────────────────────────────────────────────
+  # 1. In Teams: channel → ... → Connectors → Incoming Webhook → Configure
+  # 2. Copy the webhook URL
+  teams:
+    enabled: false
+    webhookUrl: "https://outlook.office.com/webhook/..."
+
+  # ── Email ──────────────────────────────────────────────────────────────────
+  email:
+    enabled: false
+    smarthost: "smtp.gmail.com:587"
+    from: "alerts@example.com"
+    to: "you@example.com"
+    username: "alerts@example.com"
+    password: "your-gmail-app-password"
+    requireTLS: true
+
+# Faster alerting for demo purposes
+alertmanager:
+  groupWait: "10s"
+  groupInterval: "1m"
+  repeatInterval: "1h"

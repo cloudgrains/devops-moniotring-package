@@ -1,0 +1,134 @@
+╔══════════════════════════════════════════════════════════════╗
+║              Monitoring Pack — Deployment Complete            ║
+╚══════════════════════════════════════════════════════════════╝
+
+  Release  : {{ .Release.Name }}
+  Namespace: {{ include "monitoring-pack.namespace" . }}
+  Version  : {{ .Chart.Version }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MONITORED TARGETS ({{ len .Values.targets }})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- range .Values.targets }}
+  • {{ .name }}: {{ .url }}
+{{- end }}
+{{- range .Values.tcpTargets }}
+  • {{ .name }} [TCP]: {{ .host }}
+{{- end }}
+{{- range .Values.dnsTargets }}
+  • {{ .name }} [DNS]: {{ .host }}
+{{- end }}
+{{- range .Values.icmpTargets }}
+  • {{ .name }} [ICMP]: {{ .host }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACCESS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.grafana.enabled }}
+
+ GRAFANA — Dashboards & Visualisation
+{{- if .Values.grafana.ingress.enabled }}
+   URL  : https://{{ .Values.grafana.ingress.host }}
+{{- else if eq .Values.grafana.service.type "NodePort" }}
+   export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
+   export GRAFANA_PORT=$(kubectl get svc {{ include "monitoring-pack.grafana.fullname" . }} \
+     -n {{ include "monitoring-pack.namespace" . }} -o jsonpath="{.spec.ports[0].nodePort}")
+   echo "Grafana: http://$NODE_IP:$GRAFANA_PORT"
+{{- else }}
+   kubectl port-forward -n {{ include "monitoring-pack.namespace" . }} \
+     svc/{{ include "monitoring-pack.grafana.fullname" . }} 3000:3000 &
+   URL  : http://localhost:3000
+{{- end }}
+{{- if not .Values.grafana.existingSecret }}
+   User : {{ .Values.grafana.adminUser }}
+   Pass : {{ .Values.grafana.adminPassword }}
+   ⚠  Change the default password after first login!
+{{- else }}
+   Credentials are stored in Secret: {{ .Values.grafana.existingSecret }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.prometheus.enabled }}
+
+ PROMETHEUS — Metrics & Query
+{{- if .Values.prometheus.ingress.enabled }}
+   URL  : https://{{ .Values.prometheus.ingress.host }}
+{{- else }}
+   kubectl port-forward -n {{ include "monitoring-pack.namespace" . }} \
+     svc/{{ include "monitoring-pack.prometheus.fullname" . }} 9090:9090 &
+   URL  : http://localhost:9090
+{{- end }}
+{{- end }}
+
+{{- if .Values.alertmanager.enabled }}
+
+ ALERTMANAGER — Alert Routing
+   kubectl port-forward -n {{ include "monitoring-pack.namespace" . }} \
+     svc/{{ include "monitoring-pack.alertmanager.fullname" . }} 9093:9093 &
+   URL  : http://localhost:9093
+{{- end }}
+
+{{- if .Values.blackboxExporter.enabled }}
+
+ BLACKBOX EXPORTER — Probe Engine
+   kubectl port-forward -n {{ include "monitoring-pack.namespace" . }} \
+     svc/{{ include "monitoring-pack.blackbox.fullname" . }} 9115:9115 &
+   Test : curl "http://localhost:9115/probe?target=https://google.com&module=http_2xx"
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ NOTIFICATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.notifications.slack.enabled }}
+  ✓ Slack    → {{ .Values.notifications.slack.channel }}
+{{- else }}
+  ✗ Slack    (disabled — set notifications.slack.enabled=true)
+{{- end }}
+{{- if .Values.notifications.email.enabled }}
+  ✓ Email    → {{ .Values.notifications.email.to }}
+{{- else }}
+  ✗ Email    (disabled — set notifications.email.enabled=true)
+{{- end }}
+{{- if .Values.notifications.discord.enabled }}
+  ✓ Discord  (enabled)
+{{- else }}
+  ✗ Discord  (disabled — set notifications.discord.enabled=true)
+{{- end }}
+{{- if .Values.notifications.teams.enabled }}
+  ✓ Teams    (enabled)
+{{- else }}
+  ✗ Teams    (disabled — set notifications.teams.enabled=true)
+{{- end }}
+{{- if .Values.notifications.telegram.enabled }}
+  ✓ Telegram (enabled)
+{{- else }}
+  ✗ Telegram (disabled — set notifications.telegram.enabled=true)
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ VERIFY DEPLOYMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Check all pods are running:
+  kubectl get pods -n {{ include "monitoring-pack.namespace" . }}
+
+  # Run built-in connectivity tests:
+  helm test {{ .Release.Name }} -n {{ include "monitoring-pack.namespace" . }} --logs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ COMMON OPERATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Add a website to values.yaml and upgrade:
+  helm upgrade {{ .Release.Name }} . -f values.yaml -n {{ include "monitoring-pack.namespace" . }}
+
+  # Upgrade chart version:
+  helm upgrade {{ .Release.Name }} . -n {{ include "monitoring-pack.namespace" . }} --reuse-values
+
+  # Uninstall (retains PVCs — use 'kubectl delete pvc' to remove data):
+  helm uninstall {{ .Release.Name }} -n {{ include "monitoring-pack.namespace" . }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DOCS: https://github.com/your-org/monitoring-pack
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

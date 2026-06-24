@@ -1,0 +1,404 @@
+# ==============================================================================
+# Monitoring Pack — values.yaml
+#
+# This is the ONLY file you need to edit to get started.
+# Add your websites under `targets`, set notifications, and install.
+#
+# Quick start:
+#   helm install website-monitor . --namespace monitoring --create-namespace
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# GLOBAL — Labels and identity added to every resource
+# ------------------------------------------------------------------------------
+global:
+  # Deployment environment — shows up as a label on every Kubernetes resource
+  # Examples: dev, staging, production
+  environment: ""
+
+  # Team that owns this deployment (for multi-team clusters)
+  team: ""
+
+  # Logical application name
+  application: "website-monitoring"
+
+# ------------------------------------------------------------------------------
+# MONITORING TARGETS — Add the websites you want to monitor here
+# ------------------------------------------------------------------------------
+targets:
+  - name: Google
+    url: https://google.com
+    interval: 60s    # How often to probe (overrides prometheus.scrapeInterval)
+    module: http_2xx # Probe type — see "Probe Modules" in README
+
+
+# TCP targets — verify a host:port is accepting connections
+tcpTargets: []
+# - name: My Database
+#   host: "db.example.com:5432"
+#   interval: 30s
+
+# DNS targets — verify that a hostname resolves correctly
+dnsTargets: []
+# - name: My Domain
+#   host: "example.com"
+#   interval: 60s
+
+# ICMP (Ping) targets — requires blackboxExporter.privileged: true
+icmpTargets: []
+# - name: Gateway
+#   host: "192.168.1.1"
+#   interval: 30s
+
+# ------------------------------------------------------------------------------
+# ALERT THRESHOLDS
+# ------------------------------------------------------------------------------
+alerts:
+  ssl:
+    warningDays: 30    # Alert when SSL cert expires within this many days
+    criticalDays: 7    # Critical alert threshold (days)
+  responseTime:
+    warning: 2.0       # Alert when response time exceeds this (seconds)
+    critical: 5.0      # Critical threshold (seconds)
+  downFor: "1m"        # How long a target must be down before firing
+
+# ------------------------------------------------------------------------------
+# NOTIFICATIONS — Enable one or more channels below
+# ------------------------------------------------------------------------------
+notifications:
+  # ── Slack ───────────────────────────────────────────────────────────────────
+  slack:
+    enabled: false
+    webhookUrl: ""         # https://hooks.slack.com/services/...
+    channel: "#alerts"
+    username: "Monitoring Pack"
+    iconEmoji: ":bell:"
+
+  # ── Email (SMTP) ─────────────────────────────────────────────────────────────
+  email:
+    enabled: false
+    smarthost: "smtp.gmail.com:587"
+    from: "alerts@example.com"
+    to: "admin@example.com"
+    username: ""
+    password: ""           # Use a Kubernetes Secret in production
+    requireTLS: true
+
+  # ── Discord ──────────────────────────────────────────────────────────────────
+  # Append /slack to your Discord webhook URL:
+  # https://discord.com/api/webhooks/<id>/<token>/slack
+  discord:
+    enabled: false
+    webhookUrl: ""
+
+  # ── Microsoft Teams ──────────────────────────────────────────────────────────
+  teams:
+    enabled: false
+    webhookUrl: ""         # Incoming Webhook connector URL
+
+  # ── Telegram ─────────────────────────────────────────────────────────────────
+  telegram:
+    enabled: false
+    botToken: ""           # Token from @BotFather
+    chatId: ""             # Chat or group ID (negative number for groups)
+
+# ------------------------------------------------------------------------------
+# PROMETHEUS OPERATOR INTEGRATION
+# Use these when you have kube-prometheus-stack (or any Prometheus Operator)
+# already installed. Set prometheus.enabled: false and enable these instead.
+# ------------------------------------------------------------------------------
+
+# ServiceMonitor — lets existing Prometheus Operator discover and scrape targets
+# through Blackbox Exporter using CRD-based configuration.
+serviceMonitor:
+  enabled: false
+  # Labels added to the ServiceMonitor so your Prometheus picks it up.
+  # For kube-prometheus-stack: { release: kube-prometheus-stack }
+  labels: {}
+  interval: "60s"
+  scrapeTimeout: "30s"
+  honorLabels: false
+  honorTimestamps: true
+  # Extra relabelings applied to every endpoint
+  relabelings: []
+  # Metric relabelings applied after scrape
+  metricRelabelings: []
+
+# PrometheusRule — deploys alert rules as a CRD instead of inside Prometheus config.
+# Enable this when using Prometheus Operator (kube-prometheus-stack).
+prometheusRule:
+  enabled: false
+  # Labels for PrometheusRule discovery.
+  # For kube-prometheus-stack: { release: kube-prometheus-stack }
+  labels: {}
+  additionalLabels: {}
+
+# Probe CRD — the native Prometheus Operator way to configure Blackbox probing.
+# Requires prometheus-operator v0.47+ (kube-prometheus-stack >= 16).
+probe:
+  enabled: false
+  labels: {}
+  interval: "60s"
+  scrapeTimeout: "30s"
+  # URL of the Blackbox Exporter if using an external one.
+  # Leave empty to use the one deployed by this chart.
+  proberUrl: ""
+
+# ------------------------------------------------------------------------------
+# PROMETHEUS
+# ------------------------------------------------------------------------------
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: v2.51.0
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+  # How long to keep metric data
+  retention: "30d"
+  retentionSize: "10GB"
+
+  scrapeInterval: "60s"
+  evaluationInterval: "30s"
+  scrapeTimeout: "20s"       # Must be < scrapeInterval AND >= blackbox module timeout (15s)
+
+  service:
+    type: ClusterIP
+    port: 9090
+    nodePort: ""           # Set when type: NodePort
+
+  persistence:
+    enabled: true
+    storageClass: ""       # Leave empty for the cluster default StorageClass
+    size: "20Gi"
+    accessMode: ReadWriteOnce
+
+  # Append raw scrape_configs to prometheus.yml
+  extraScrapeConfigs: []
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext:
+    fsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Ingress — expose Prometheus on a real hostname
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    #   nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    host: "prometheus.example.com"
+    tls: []
+    # - secretName: prometheus-tls
+    #   hosts: [prometheus.example.com]
+
+# ------------------------------------------------------------------------------
+# GRAFANA
+# ------------------------------------------------------------------------------
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: 10.4.0
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # CHANGE THESE in production!
+  adminUser: admin
+  adminPassword: "monitoring-pack-admin"
+
+  # Use an existing Kubernetes Secret for admin credentials instead of the
+  # adminUser/adminPassword values above. The Secret must have keys:
+  #   admin-user     — Grafana admin username
+  #   admin-password — Grafana admin password
+  existingSecret: ""
+
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  service:
+    type: ClusterIP
+    port: 3000
+    nodePort: ""
+
+  # Ingress — expose Grafana on a real hostname
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    #   nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    #   cert-manager.io/cluster-issuer: letsencrypt-prod
+    host: "grafana.example.com"
+    tls: []
+    # - secretName: grafana-tls
+    #   hosts: [grafana.example.com]
+
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: "5Gi"
+    accessMode: ReadWriteOnce
+
+  # Extra labels on the dashboard ConfigMap.
+  # kube-prometheus-stack uses: grafana_dashboard: "1"
+  # This allows its Grafana sidecar to auto-discover and import the dashboard.
+  dashboardLabels: {}
+  # grafana_dashboard: "1"
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext:
+    fsGroup: 472
+    runAsNonRoot: true
+    runAsUser: 472
+    seccompProfile:
+      type: RuntimeDefault
+
+# ------------------------------------------------------------------------------
+# ALERTMANAGER
+# ------------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+  image:
+    repository: prom/alertmanager
+    tag: v0.27.0
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+  service:
+    type: ClusterIP
+    port: 9093
+    nodePort: ""
+
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: "2Gi"
+    accessMode: ReadWriteOnce
+
+  # Alertmanager routing
+  resolveTimeout: "2m"
+  groupBy: ["alertname"]
+  groupWait: "30s"
+  groupInterval: "10m"
+  repeatInterval: "6h"
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext:
+    fsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+# ------------------------------------------------------------------------------
+# BLACKBOX EXPORTER
+# ------------------------------------------------------------------------------
+blackboxExporter:
+  enabled: true
+  image:
+    repository: prom/blackbox-exporter
+    tag: v0.25.0
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "20m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+
+  service:
+    type: ClusterIP
+    port: 9115
+
+  # Enable for ICMP (ping) probes — grants NET_RAW Linux capability
+  privileged: false
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+# ------------------------------------------------------------------------------
+# NETWORK POLICIES (optional)
+# When enabled, Kubernetes NetworkPolicy resources are created to restrict
+# traffic between components and to external services.
+# Requires a CNI plugin that enforces NetworkPolicy (Calico, Cilium, etc.).
+# ------------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# POD DISRUPTION BUDGETS (optional)
+# Prevents simultaneous eviction of all pods during cluster maintenance.
+# Safe for single-replica deployments: uses maxUnavailable (not minAvailable).
+# ------------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  # maxUnavailable: 1 allows draining nodes even with single replicas.
+  # Switch to minAvailable: 1 only when running 2+ replicas.
+  maxUnavailable: 1
+  # minAvailable: ""
+
+# ------------------------------------------------------------------------------
+# GLOBAL SETTINGS
+# ------------------------------------------------------------------------------
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""      # Override deployment namespace (default: Release.Namespace)
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Extra labels added to EVERY resource (merged with global labels)
+commonLabels: {}
+
+# Extra annotations added to every resource
+commonAnnotations: {}

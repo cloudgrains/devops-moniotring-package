@@ -1,0 +1,28 @@
+{{- if .Values.grafana.enabled }}
+# Grafana datasource provisioning — auto-creates the Prometheus datasource on startup
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-pack.grafana.fullname" . }}-datasources
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: {{ include "monitoring-pack.prometheus.address" . }}
+        access: proxy
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: {{ .Values.prometheus.scrapeInterval }}
+          httpMethod: POST
+          prometheusType: Prometheus
+          prometheusVersion: {{ .Values.prometheus.image.tag | trimPrefix "v" | quote }}
+          exemplarTraceIdDestinations: []
+{{- end }}

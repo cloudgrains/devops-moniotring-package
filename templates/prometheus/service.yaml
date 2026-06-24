@@ -1,0 +1,22 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "monitoring-pack.prometheus.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  type: {{ .Values.prometheus.service.type }}
+  selector:
+    {{- include "monitoring-pack.prometheus.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.prometheus.service.port }}
+      targetPort: http
+      protocol: TCP
+      {{- if and (eq .Values.prometheus.service.type "NodePort") .Values.prometheus.service.nodePort }}
+      nodePort: {{ .Values.prometheus.service.nodePort }}
+      {{- end }}
+{{- end }}

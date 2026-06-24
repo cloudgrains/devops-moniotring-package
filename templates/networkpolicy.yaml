@@ -1,0 +1,176 @@
+{{- if .Values.networkPolicy.enabled }}
+# ── Grafana ───────────────────────────────────────────────────────────────────
+{{- if .Values.grafana.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "monitoring-pack.grafana.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "monitoring-pack.grafana.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow incoming traffic on port 3000 from anywhere in the cluster
+    - ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # Allow Grafana to query Prometheus
+    - ports:
+        - port: {{ .Values.prometheus.service.port }}
+          protocol: TCP
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+# ── Prometheus ────────────────────────────────────────────────────────────────
+{{- if .Values.prometheus.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "monitoring-pack.prometheus.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "monitoring-pack.prometheus.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow incoming traffic on port 9090 from anything in the namespace
+    - ports:
+        - port: 9090
+          protocol: TCP
+  egress:
+    # Scrape Blackbox Exporter
+    - ports:
+        - port: {{ .Values.blackboxExporter.service.port }}
+          protocol: TCP
+    # Send alerts to Alertmanager
+    - ports:
+        - port: {{ .Values.alertmanager.service.port }}
+          protocol: TCP
+    # Kubernetes API server (for service discovery)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+# ── Alertmanager ──────────────────────────────────────────────────────────────
+{{- if .Values.alertmanager.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "monitoring-pack.alertmanager.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "monitoring-pack.alertmanager.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Prometheus to push alerts
+    - ports:
+        - port: 9093
+          protocol: TCP
+  egress:
+    # Allow outbound HTTPS for notification webhooks (Slack, Discord, Teams, Telegram)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+    # Allow outbound SMTP for email notifications
+    - ports:
+        - port: 25
+          protocol: TCP
+        - port: 465
+          protocol: TCP
+        - port: 587
+          protocol: TCP
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+# ── Blackbox Exporter ─────────────────────────────────────────────────────────
+{{- if .Values.blackboxExporter.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "monitoring-pack.blackbox.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Prometheus to scrape probe results
+    - ports:
+        - port: 9115
+          protocol: TCP
+  egress:
+    # Allow probing external HTTP/HTTPS targets
+    - ports:
+        - port: 80
+          protocol: TCP
+        - port: 443
+          protocol: TCP
+    # Allow DNS probes and resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow custom TCP port probes (common ports)
+    - ports:
+        - port: 22
+          protocol: TCP
+        - port: 25
+          protocol: TCP
+        - port: 3306
+          protocol: TCP
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,0 +1,102 @@
+{{- if .Values.blackboxExporter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring-pack.blackbox.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.blackboxExporter.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 8 }}
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/blackbox/configmap.yaml") . | sha256sum }}
+        {{- with .Values.blackboxExporter.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "monitoring-pack.serviceAccountName" . }}
+      securityContext:
+        {{- if .Values.blackboxExporter.privileged }}
+        runAsNonRoot: false
+        {{- else }}
+        {{- toYaml .Values.blackboxExporter.podSecurityContext | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: blackbox-exporter
+          image: "{{ .Values.blackboxExporter.image.repository }}:{{ .Values.blackboxExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.blackboxExporter.image.pullPolicy }}
+          args:
+            - "--config.file=/etc/blackbox-exporter/blackbox.yml"
+            - "--log.level=info"
+          ports:
+            - name: http
+              containerPort: 9115
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.blackboxExporter.resources | nindent 12 }}
+          securityContext:
+            {{- if .Values.blackboxExporter.privileged }}
+            capabilities:
+              add: ["NET_RAW"]
+            privileged: true
+            {{- else }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox-exporter
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "monitoring-pack.blackbox.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.blackboxExporter.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.blackboxExporter.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.blackboxExporter.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

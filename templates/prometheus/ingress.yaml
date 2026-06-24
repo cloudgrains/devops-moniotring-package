@@ -1,0 +1,33 @@
+{{- if and .Values.prometheus.enabled .Values.prometheus.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "monitoring-pack.prometheus.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  {{- with .Values.prometheus.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.prometheus.ingress.className }}
+  ingressClassName: {{ .Values.prometheus.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.prometheus.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "monitoring-pack.prometheus.fullname" . }}
+                port:
+                  name: http
+  {{- if .Values.prometheus.ingress.tls }}
+  tls:
+    {{- toYaml .Values.prometheus.ingress.tls | nindent 4 }}
+  {{- end }}
+{{- end }}

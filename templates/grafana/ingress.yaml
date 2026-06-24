@@ -1,0 +1,33 @@
+{{- if and .Values.grafana.enabled .Values.grafana.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "monitoring-pack.grafana.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+  {{- with .Values.grafana.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.grafana.ingress.className }}
+  ingressClassName: {{ .Values.grafana.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.grafana.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "monitoring-pack.grafana.fullname" . }}
+                port:
+                  name: http
+  {{- if .Values.grafana.ingress.tls }}
+  tls:
+    {{- toYaml .Values.grafana.ingress.tls | nindent 4 }}
+  {{- end }}
+{{- end }}

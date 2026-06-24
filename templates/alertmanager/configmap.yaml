@@ -1,0 +1,91 @@
+{{- if .Values.alertmanager.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring-pack.alertmanager.fullname" . }}
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: {{ .Values.alertmanager.resolveTimeout }}
+      {{- if .Values.notifications.email.enabled }}
+      smtp_smarthost: {{ .Values.notifications.email.smarthost | quote }}
+      smtp_from: {{ .Values.notifications.email.from | quote }}
+      {{- if .Values.notifications.email.username }}
+      smtp_auth_username: {{ .Values.notifications.email.username | quote }}
+      smtp_auth_password: {{ .Values.notifications.email.password | quote }}
+      {{- end }}
+      smtp_require_tls: {{ .Values.notifications.email.requireTLS }}
+      {{- end }}
+
+    # ── Routing tree ───────────────────────────────────────────────────────────
+    route:
+      group_by: {{ toJson .Values.alertmanager.groupBy }}
+      group_wait: {{ .Values.alertmanager.groupWait }}
+      group_interval: {{ .Values.alertmanager.groupInterval }}
+      repeat_interval: {{ .Values.alertmanager.repeatInterval }}
+      receiver: default
+      routes:
+        # Critical alerts — same repeat interval as default (no extra spam)
+        - matchers:
+            - severity="critical"
+          receiver: critical
+          repeat_interval: {{ .Values.alertmanager.repeatInterval }}
+          continue: false
+        # SSL alerts route to their own receiver only — no fallthrough to default
+        - matchers:
+            - type="ssl"
+          receiver: ssl-alerts
+          continue: false
+        # Warning alerts
+        - matchers:
+            - severity="warning"
+          receiver: default
+          continue: false
+
+    # ── Inhibition rules ───────────────────────────────────────────────────────
+    inhibit_rules:
+      # If a website is down, suppress secondary alerts for the same target
+      # (prevents UnexpectedHTTPStatus and SlowResponseTime firing alongside WebsiteDown)
+      - source_matchers:
+          - alertname="WebsiteDown"
+        target_matchers:
+          - alertname=~"SlowResponseTime.*|UnexpectedHTTPStatus"
+        equal: [instance]
+      # If the blackbox exporter is down, suppress all probe alerts
+      - source_matchers:
+          - alertname="BlackboxExporterDown"
+        target_matchers:
+          - job=~"blackbox.*"
+
+    # ── Receivers ─────────────────────────────────────────────────────────────
+    receivers:
+
+      - name: default
+        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+
+      - name: critical
+        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+
+      - name: ssl-alerts
+        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+
+    # ── Notification templates ─────────────────────────────────────────────────
+    templates:
+      - /etc/alertmanager/templates/*.tmpl
+{{- end }}

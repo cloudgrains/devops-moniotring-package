@@ -1,0 +1,180 @@
+{{- if and .Values.serviceMonitor.enabled .Values.blackboxExporter.enabled }}
+{{- if .Values.targets }}
+---
+# ServiceMonitor for HTTP/HTTPS targets
+# Each endpoint entry makes Prometheus probe one URL through the Blackbox Exporter.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-http
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    {{- range .Values.targets }}
+    - port: http
+      path: /probe
+      interval: {{ default $.Values.serviceMonitor.interval .interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      params:
+        module: [{{ default "http_2xx" .module }}]
+      honorLabels: {{ $.Values.serviceMonitor.honorLabels }}
+      honorTimestamps: {{ $.Values.serviceMonitor.honorTimestamps }}
+      relabelings:
+        # Override __address__ with blackbox exporter; inject target URL as param
+        - targetLabel: __param_target
+          replacement: {{ .url | quote }}
+        - sourceLabels: [__param_target]
+          targetLabel: instance
+        - targetLabel: __address__
+          replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+        - targetLabel: target_name
+          replacement: {{ .name | quote }}
+        {{- with $.Values.serviceMonitor.relabelings }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $.Values.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "monitoring-pack.namespace" . }}
+{{- end }}
+{{- $httpsTargets := list -}}
+{{- range .Values.targets -}}
+  {{- if hasPrefix "https://" .url -}}
+    {{- $httpsTargets = append $httpsTargets . -}}
+  {{- end -}}
+{{- end -}}
+{{- if $httpsTargets }}
+---
+# ServiceMonitor for SSL certificate probing (https:// targets only)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-ssl
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    {{- range $httpsTargets }}
+    - port: http
+      path: /probe
+      interval: {{ default $.Values.serviceMonitor.interval .interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      params:
+        module: [ssl_expiry]
+      honorLabels: {{ $.Values.serviceMonitor.honorLabels }}
+      relabelings:
+        - targetLabel: __param_target
+          replacement: {{ .url | quote }}
+        - sourceLabels: [__param_target]
+          targetLabel: instance
+        - targetLabel: __address__
+          replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+        - targetLabel: target_name
+          replacement: {{ .name | quote }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "monitoring-pack.namespace" . }}
+{{- end }}
+{{- if .Values.tcpTargets }}
+---
+# ServiceMonitor for TCP targets
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-tcp
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    {{- range .Values.tcpTargets }}
+    - port: http
+      path: /probe
+      interval: {{ default $.Values.serviceMonitor.interval .interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      params:
+        module: [tcp_connect]
+      relabelings:
+        - targetLabel: __param_target
+          replacement: {{ .host | quote }}
+        - sourceLabels: [__param_target]
+          targetLabel: instance
+        - targetLabel: __address__
+          replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+        - targetLabel: target_name
+          replacement: {{ .name | quote }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "monitoring-pack.namespace" . }}
+{{- end }}
+{{- if .Values.icmpTargets }}
+---
+# ServiceMonitor for ICMP targets
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-icmp
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    {{- range .Values.icmpTargets }}
+    - port: http
+      path: /probe
+      interval: {{ default $.Values.serviceMonitor.interval .interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      params:
+        module: [icmp]
+      relabelings:
+        - targetLabel: __param_target
+          replacement: {{ .host | quote }}
+        - sourceLabels: [__param_target]
+          targetLabel: instance
+        - targetLabel: __address__
+          replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+        - targetLabel: target_name
+          replacement: {{ .name | quote }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "monitoring-pack.namespace" . }}
+{{- end }}
+{{- end }}

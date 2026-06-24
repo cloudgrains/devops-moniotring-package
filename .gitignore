@@ -1,0 +1,40 @@
+# ── Helm ──────────────────────────────────────────────────────────────────────
+# Packaged chart archives (produced by `helm package .`)
+*.tgz
+
+# Downloaded chart dependencies (produced by `helm dependency update`)
+charts/*.tgz
+charts/*.tar.gz
+
+# Helm template debug output
+rendered*.yaml
+output*.yaml
+debug*.yaml
+
+# ── Secrets & credentials ──────────────────────────────────────────────────────
+.env
+.env.*
+secrets.yaml
+secret-values.yaml
+*-secret.yaml
+*.kubeconfig
+kubeconfig
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# JetBrains IDEs
+.idea/
+
+# VS Code (keep .vscode/settings.json if present, ignore workspace files)
+*.code-workspace
+
+# ── Temp / build ──────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.swp
+*~

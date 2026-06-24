@@ -1,0 +1,453 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monitoring Pack Values",
+  "description": "Configuration values for the monitoring-pack Helm chart",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "environment": { "type": "string" },
+        "team": { "type": "string" },
+        "application": { "type": "string" }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "description": "List of HTTP/HTTPS endpoints to monitor",
+      "items": {
+        "type": "object",
+        "required": ["name", "url"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable name for this target (used in dashboards and alerts)"
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https?://",
+            "description": "Full URL to probe, e.g. https://example.com"
+          },
+          "interval": {
+            "type": "string",
+            "pattern": "^[0-9]+(s|m|h)$",
+            "description": "Probe interval, e.g. 30s, 1m, 5m"
+          },
+          "module": {
+            "type": "string",
+            "enum": [
+              "http_2xx",
+              "http_2xx_no_ssl_verify",
+              "http_post_2xx",
+              "ssl_expiry",
+              "tcp_connect",
+              "tcp_tls",
+              "dns_check",
+              "icmp"
+            ],
+            "description": "Blackbox Exporter probe module to use"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tcpTargets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "host"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "host": {
+            "type": "string",
+            "description": "host:port to probe, e.g. db.example.com:5432"
+          },
+          "interval": { "type": "string", "pattern": "^[0-9]+(s|m|h)$" }
+        }
+      }
+    },
+    "dnsTargets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "host"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "host": { "type": "string" },
+          "interval": { "type": "string", "pattern": "^[0-9]+(s|m|h)$" }
+        }
+      }
+    },
+    "icmpTargets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "host"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "host": { "type": "string" },
+          "interval": { "type": "string", "pattern": "^[0-9]+(s|m|h)$" }
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "properties": {
+        "ssl": {
+          "type": "object",
+          "properties": {
+            "warningDays": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "description": "Alert when SSL cert expires within this many days (must be > criticalDays)"
+            },
+            "criticalDays": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "description": "Critical alert threshold in days"
+            }
+          }
+        },
+        "responseTime": {
+          "type": "object",
+          "properties": {
+            "warning": {
+              "type": "number",
+              "minimum": 0.1,
+              "description": "Response time warning threshold in seconds"
+            },
+            "critical": {
+              "type": "number",
+              "minimum": 0.1,
+              "description": "Response time critical threshold in seconds"
+            }
+          }
+        },
+        "downFor": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "description": "Duration a target must be down before alerting fires, e.g. 2m"
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "slack": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "webhookUrl": {
+              "type": "string",
+              "description": "Slack Incoming Webhook URL — required when enabled: true"
+            },
+            "channel": { "type": "string" },
+            "username": { "type": "string" },
+            "iconEmoji": { "type": "string" }
+          }
+        },
+        "email": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "smarthost": { "type": "string" },
+            "from": { "type": "string" },
+            "to": { "type": "string" },
+            "username": { "type": "string" },
+            "password": { "type": "string" },
+            "requireTLS": { "type": "boolean" }
+          }
+        },
+        "discord": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "webhookUrl": { "type": "string" }
+          }
+        },
+        "teams": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "webhookUrl": { "type": "string" }
+          }
+        },
+        "telegram": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "botToken": { "type": "string" },
+            "chatId": {
+              "description": "Telegram chat or group ID — can be a string or integer (group IDs are negative)",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "integer" }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "type": "object" },
+        "interval": { "type": "string" },
+        "scrapeTimeout": { "type": "string" },
+        "honorLabels": { "type": "boolean" },
+        "honorTimestamps": { "type": "boolean" },
+        "relabelings": { "type": "array" },
+        "metricRelabelings": { "type": "array" }
+      }
+    },
+    "prometheusRule": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "type": "object" },
+        "additionalLabels": { "type": "object" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "type": "object" },
+        "interval": { "type": "string" },
+        "scrapeTimeout": { "type": "string" },
+        "proberUrl": { "type": "string" }
+      }
+    },
+    "prometheus": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of Prometheus replicas (1 recommended for standalone)"
+        },
+        "retention": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h|d|w|y)$",
+          "description": "Data retention period, e.g. 30d, 1y"
+        },
+        "retentionSize": {
+          "type": "string",
+          "description": "Maximum data size on disk, e.g. 10GB"
+        },
+        "scrapeInterval": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "description": "How often Prometheus scrapes targets, e.g. 60s"
+        },
+        "evaluationInterval": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "description": "How often Prometheus evaluates alert rules, e.g. 30s"
+        },
+        "scrapeTimeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "description": "Per-scrape timeout — must be < scrapeInterval and >= blackbox module timeout (15s)"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object" },
+            "host": { "type": "string" },
+            "tls": { "type": "array" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClass": { "type": "string" },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]+(Mi|Gi|Ti)$",
+              "description": "Storage size, e.g. 10Gi, 50Gi"
+            },
+            "accessMode": {
+              "type": "string",
+              "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
+            }
+          }
+        }
+      }
+    },
+    "grafana": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "adminUser": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Grafana admin username"
+        },
+        "adminPassword": {
+          "type": "string",
+          "description": "Grafana admin password — change this in production!"
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of an existing Secret with admin-user and admin-password keys"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object" },
+            "host": { "type": "string" },
+            "tls": { "type": "array" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClass": { "type": "string" },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]+(Mi|Gi|Ti)$"
+            },
+            "accessMode": {
+              "type": "string",
+              "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
+            }
+          }
+        }
+      }
+    },
+    "alertmanager": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "resolveTimeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$"
+        },
+        "groupWait": { "type": "string" },
+        "groupInterval": { "type": "string" },
+        "repeatInterval": { "type": "string" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string", "pattern": "^[0-9]+(Mi|Gi|Ti)$" }
+          }
+        }
+      }
+    },
+    "blackboxExporter": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "privileged": {
+          "type": "boolean",
+          "description": "Enable NET_RAW capability for ICMP (ping) probes"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create NetworkPolicy resources to restrict inter-component traffic"
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create PodDisruptionBudget resources for each component"
+        },
+        "maxUnavailable": {
+          "description": "Maximum number of pods that can be unavailable during disruption"
+        },
+        "minAvailable": {
+          "description": "Minimum number of pods that must be available during disruption (use for multi-replica deployments)"
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "namespaceOverride": { "type": "string" },
+    "commonLabels": { "type": "object" },
+    "commonAnnotations": { "type": "object" }
+  }
+}

@@ -1,0 +1,33 @@
+# Minimal values.yaml — the smallest useful configuration.
+# Monitors two websites with no notifications and no persistent storage.
+# Good for testing / local clusters (Kind, Minikube).
+#
+# Install:
+#   helm install monitor monitoring-pack -f examples/values-minimal.yaml
+
+targets:
+  - name: Google
+    url: https://google.com
+  - name: GitHub
+    url: https://github.com
+
+# Disable persistence — data is lost on pod restart
+prometheus:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+grafana:
+  persistence:
+    enabled: false
+  adminPassword: "admin"
+
+alertmanager:
+  persistence:
+    enabled: false

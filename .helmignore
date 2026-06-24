@@ -1,0 +1,35 @@
+# Patterns to exclude from the Helm chart package (`helm package .`)
+# These files are useful in the repo but not needed inside the chart archive.
+
+# Git internals
+.git/
+.github/
+.gitignore
+
+# CI / lint tooling
+.yamllint.yml
+
+# Standalone example values (users download these from the repo, not the package)
+examples/
+
+# Standalone dashboard exports and alert rule files
+# (The chart uses files/ — these extras are for reference only)
+dashboards/
+alert-rules/
+
+# Community / legal docs — already exposed via ArtifactHub from Chart.yaml metadata
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+
+# Packaged chart archives that may exist locally
+*.tgz
+charts/*.tgz
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+*~
