@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] — 2026-07-05
+
+Every change in this release was verified against a real kind cluster deployment (not just `helm lint`/`helm template`) — see the individual entries for what was specifically exercised.
+
+### Added
+
+**High Availability** — Prometheus and Alertmanager are now `StatefulSet`s (were `Deployment`s) with one PVC per replica via `volumeClaimTemplates`, instead of a single shared PVC that made `replicaCount > 1` unsafe. Alertmanager replicas form a real gossip cluster (`--cluster.peer`, headless Service for peer discovery) so duplicate alerts from independent Prometheus replicas get deduplicated into a single notification instead of paging once per replica. Prometheus pushes every alert to every Alertmanager replica directly (not through a load-balanced Service), the standard Prometheus-recommended HA pattern. Verified live: scaled to `prometheus.replicaCount: 2` / `alertmanager.replicaCount: 2`, confirmed both StatefulSets reached `2/2` ready with independent PVCs, and confirmed via `/api/v2/status` that the Alertmanager cluster reached `"ready"` with both replicas listed as gossip peers. Default `replicaCount: 1` for both keeps today's footprint unchanged — this is opt-in. See [High Availability](README.md#high-availability) and the **Changed** entry below for the PVC-naming migration note.
+
+**Authenticated-endpoint monitoring** — targets can now set `headers`, `bearerToken`, or `basicAuth`, and Monitoring Pack generates a dedicated Blackbox Exporter module carrying those credentials automatically (previously required hand-editing the Blackbox ConfigMap). Verified live: deployed a target with a custom `X-API-Key` header against a real header-echo service and confirmed the exact header value arrived at the target and `probe_success` reported correctly.
+
+**Escalation policies** — `alerts.escalation` adds a generic meta-alert (`CriticalAlertEscalation`) over Prometheus's own `ALERTS` metric: any alert with `severity: critical` that stays firing past `alerts.escalation.after` additionally notifies a secondary channel (`notifications.escalation.{pagerdutyRoutingKey,opsgenieApiKey,webhookUrl}`) on top of (not instead of) normal critical routing. Implemented once, generically — no per-alert-type duplication — using `label_replace` to preserve the original alert's name as `original_alertname` (Prometheus always overwrites the `alertname` label with the escalation rule's own name). Verified live: triggered real `WebsiteDown`/`TCPConnectionFailed`/`DNSResolutionFailed`/`ErrorBudgetBurnFast` alerts, confirmed each correctly produced a `CriticalAlertEscalation` alert with the right `original_alertname`, and confirmed the escalation webhook received the correct payload.
+
+**Public status page** — `grafana.statusPage.enabled: true` turns on Grafana anonymous Viewer access and points the home page directly at the Website Monitoring Dashboard, for a Better Stack/Statuspage-style public page (combine with `grafana.ingress`). Verified live: confirmed the dashboard returns full data via an unauthenticated request with zero credentials. Documented security trade-off: this is Grafana's org-wide anonymous access, not its newer per-dashboard "public dashboards" feature (which needs a Grafana API call this chart can't make declaratively via Helm) — only enable on a Grafana instance with nothing else in it you'd mind being public. `grafana.statusPage.orgRole` is schema-locked to `"Viewer"` to prevent misconfiguration.
+
+### Changed (migration note for existing installs)
+
+- **PVC naming changed for Prometheus and Alertmanager** as a consequence of the Deployment→StatefulSet conversion above. Existing PVCs (`<release>-monitoring-pack-prometheus`, `<release>-monitoring-pack-alertmanager`) are retained (not deleted) but become orphaned; new pods start with fresh, empty per-replica PVCs (`data-<release>-monitoring-pack-prometheus-0`, etc.). This applies even if you keep `replicaCount: 1`. See [Upgrade](README.md#upgrade) for what this means for existing metric history/notification state and how to back up first if you need continuity.
+
+> Note: the `monitoring-pack.slug` helper argument-order bug and the `.helmignore` dashboard-emptying bug (both caught while testing this batch of work on a real cluster) never reached a tagged release — see them under [1.2.0](#120--2026-07-05) below, which they were fixed against directly.
+
+---
+
+## [1.2.0] — 2026-07-05
+
+### Added
+
+**SLO / Error budget alerting**
+- Google SRE workbook-style multi-window multi-burn-rate alerting: `ErrorBudgetBurnFast` (14.4x burn, ~2 min to fire) and `ErrorBudgetBurnSlow` (6x burn, ~15 min to fire)
+- `instance:slo_error_budget_remaining:ratio` recording rule — error budget remaining as a percentage, configurable via `slo.objectivePercent` and `slo.window`
+- New Grafana dashboard row: Error Budget Remaining (gauge + trend) and an SLO Compliance table sorted worst-first for fast triage
+
+**Alerting — new receivers & maintenance windows**
+- PagerDuty (`notifications.pagerduty`), Opsgenie (`notifications.opsgenie`), and a generic webhook receiver (`notifications.webhook`, with optional basic auth) for incident-management integrations not natively supported
+- Native maintenance windows (`maintenanceWindows`) using Alertmanager's `time_intervals`/`mute_time_intervals` — silence notification delivery during planned maintenance with no extra components
+
+**Multi-cluster / scale-out**
+- `prometheus.remoteWrite` — forward samples to Thanos, Mimir, Cortex, Grafana Cloud, or a central Prometheus for multi-cluster visibility and long-term storage
+
+**Dashboard**
+- New `$target` drill-down variable (multi-select) filters every panel down to one or more monitored targets — previously the dashboard had no way to isolate a single target
+- New "Response Latency Percentiles (p50/p95/p99)" panel using `quantile_over_time`
+
+**Developer experience**
+- CI now validates rendered `alertmanager.yml` with `amtool check-config` and rendered `prometheus.yml`/rules with `promtool check config`/`check rules` — config-level bugs (see Fixed, below) are no longer invisible to `helm template --debug`
+- CI now checks that `dashboards/website-monitoring.json` (manual-import reference copy) hasn't drifted from `files/dashboards/website-monitoring.json` (the deployed copy)
+
+### Fixed
+
+**The auto-provisioned Grafana dashboard has never actually loaded when deployed for real (pre-existing since at least v1.1.0).** `.helmignore` excluded `dashboards/` and `alert-rules/` without anchoring them to the repo root (a leading `/`). `.helmignore` uses gitignore-style matching, where an unanchored `dashboards/` matches a directory of that name at **any** depth — so it silently also excluded `files/dashboards/website-monitoring.json`, the copy actually loaded by `templates/grafana/configmap-dashboard-json.yaml` via `.Files.Get`. The result: `.Files.Get` silently returned `""`, the ConfigMap shipped with an empty `website-monitoring.json`, and Grafana logged `failed to load dashboard ... error=EOF` on every provisioning tick — the dashboard just never appeared, with no error surfaced anywhere in `helm install`/`helm template` output. Caught only by deploying to a real kind cluster and checking Grafana's dashboard list via its API — `helm template` shows the ConfigMap key is present, not that its value rendered empty. Fixed by anchoring both patterns (`/dashboards/`, `/alert-rules/`) to the repo root. **If you're running an older release of this chart, this affects you too** — `helm upgrade` to this version to pick up the fix.
+
+**DNS probes were checking the wrong thing** — `dnsTargets` was documented as "verify a hostname resolves correctly," but blackbox_exporter's DNS prober treats the scrape `target` as the DNS *server* to query and the module's `query_name` as the fixed domain to resolve. The chart pointed `target` at the user's own domain while hard-coding `query_name: google.com`, so every DNS check was silently querying the wrong server for the wrong name. Fixed by generating one Blackbox Exporter module per DNS target (`dns-<name>`, with `query_name` set correctly) and scraping it against a real resolver (`dns.defaultResolver`, override per-target with `resolver:`). Also newly supported in ServiceMonitor and Probe CRD (operator) mode, where DNS targets were previously not wired up at all. Verified end-to-end on a real kind cluster: a DNS target resolved via the cluster's own CoreDNS correctly reports `probe_success 1`, and a nonexistent domain correctly reports `0` and fires `DNSResolutionFailed`.
+
+**Slack + Discord enabled together produced an invalid Alertmanager config** — both channels are implemented via Alertmanager's `slack_configs` (Discord accepts it via a `/slack` webhook suffix), so enabling both emitted two `slack_configs:` keys in the same receiver, which Alertmanager rejects at startup. `helm template --debug` never caught this because it only renders YAML, it doesn't validate the embedded `alertmanager.yml` against Alertmanager's own schema — now fixed by merging both into a single `slack_configs` list, and CI validates the rendered config with `amtool`.
+
+**`DNSResolutionFailed` alert and the "DNS Lookup Time" dashboard panel** referenced the now-obsolete single `job="blackbox-dns"` label; updated to `job=~"blackbox-dns.*"` to match the new per-target DNS job names (see above).
+
+**The name-sanitizing `slug` helper (introduced in this release for per-target DNS/HTTP job naming) initially had Sprig's `regexReplaceAll` argument order backwards** (`regexReplaceAll(regex, replacement)` piped-in, instead of the correct `regexReplaceAll(regex, subject, replacement)`), which silently produced an **empty string** for every target name — turning two-or-more `dnsTargets` into duplicate `dns-` module/job names and crash-looping both Blackbox Exporter (`error parsing config file: ... mapping key "dns-" already defined`) and Prometheus (`found multiple scrape configs with job name "blackbox-dns-"`). Never shipped: caught in this same testing pass by deploying two DNS targets to a real cluster and watching both pods crash-loop. Fixed and re-verified with the real blackbox_exporter/Prometheus binaries (`--config.check`, `promtool check config`) before redeploying.
+
+### Changed (security hardening — opt-in required)
+
+- **Kubernetes pod auto-discovery is now opt-in** (`podMonitoring.enabled`, default `false`). Previously, a cluster-wide `ClusterRole` granting read access to `nodes`, `nodes/proxy`, `pods`, `services`, and `configmaps` was created unconditionally, even though scraping annotated pods is a bonus feature unrelated to this chart's core job (external website/SSL/TCP/DNS probing) and was undocumented in the README. If you relied on this scrape job, set `podMonitoring.enabled: true` (namespace-scoped `Role` by default, or `podMonitoring.namespaces: ["*"]` for the previous cluster-wide behavior).
+- **NetworkPolicy TCP egress ports are now derived from `tcpTargets`** instead of a hardcoded guess-list (22/25/3306/5432/6379) — custom ports no longer need a manual NetworkPolicy override. ICMP egress (when `icmpTargets` is set) now explicitly allows all egress with a documented comment, since NetworkPolicy v1 cannot filter by ICMP protocol — previously ICMP probes silently failed whenever `networkPolicy.enabled: true`.
+
+---
+
 ## [1.1.0] — 2026-06-24
 
 ### Fixed

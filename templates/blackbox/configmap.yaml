@@ -125,4 +125,64 @@ data:
         icmp:
           preferred_ip_protocol: "ip4"
           ttl: 5
+
+      {{- /*
+      ── Dynamic per-target authenticated HTTP modules ───────────────────────
+      Targets with headers/bearerToken/basicAuth get their own module so the
+      credentials are baked into the Blackbox Exporter config rather than
+      needing a hand-edited ConfigMap. Base behavior mirrors http_2xx, or
+      http_2xx_no_ssl_verify if that target's module is set explicitly.
+      */}}
+      {{- range .Values.targets }}
+      {{- if include "monitoring-pack.target.hasAuth" . }}
+
+      # Authenticated HTTP module for target "{{ .name }}"
+      http-auth-{{ include "monitoring-pack.slug" .name }}:
+        prober: http
+        timeout: 15s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: []
+          method: GET
+          follow_redirects: true
+          preferred_ip_protocol: "ip4"
+          tls_config:
+            insecure_skip_verify: {{ eq .module "http_2xx_no_ssl_verify" }}
+          {{- if .headers }}
+          headers:
+            {{- toYaml .headers | nindent 12 }}
+          {{- end }}
+          {{- if .bearerToken }}
+          bearer_token: {{ .bearerToken | quote }}
+          {{- end }}
+          {{- $basicUser := dig "basicAuth" "username" "" . }}
+          {{- if $basicUser }}
+          basic_auth:
+            username: {{ $basicUser | quote }}
+            password: {{ dig "basicAuth" "password" "" . | quote }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+
+      {{- /*
+      ── Dynamic per-target DNS modules ──────────────────────────────────────
+      blackbox_exporter's DNS prober queries "target" (a DNS server) and asks
+      it to resolve a fixed "query_name" from the module config — the module
+      cannot take query_name as a runtime parameter. So "does example.com
+      resolve?" requires its own module (query_name: example.com) paired with
+      a scrape target that points at a real resolver, not at example.com
+      itself. One module is generated per entry in .Values.dnsTargets.
+      */}}
+      {{- range .Values.dnsTargets }}
+
+      # Resolves "{{ .host }}" (dnsTargets["{{ .name }}"]) against a resolver
+      dns-{{ include "monitoring-pack.slug" .name }}:
+        prober: dns
+        timeout: 15s
+        dns:
+          query_name: {{ .host | quote }}
+          query_type: {{ default "A" .recordType | quote }}
+          valid_rcodes:
+            - NOERROR
+      {{- end }}
 {{- end }}

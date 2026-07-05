@@ -31,10 +31,51 @@ jobs:
           python-version: "3.x"
 
       - name: Install yamllint
-        run: pip install yamllint==1.35.1
+        run: pip install yamllint==1.35.1 pyyaml
 
       - name: Lint YAML files
         run: yamllint -f github -c .yamllint.yml values.yaml Chart.yaml .github/
+
+      - name: Validate values.schema.json is valid JSON
+        run: python3 -m json.tool values.schema.json > /dev/null
+
+      - name: Validate dashboard JSON is valid and the two copies are in sync
+        run: |
+          python3 -m json.tool files/dashboards/website-monitoring.json > /dev/null
+          python3 -m json.tool dashboards/website-monitoring.json > /dev/null
+          diff -q files/dashboards/website-monitoring.json dashboards/website-monitoring.json || \
+            (echo "::error::dashboards/ has drifted from files/dashboards/ — re-sync with:" && \
+             echo "::error::cp files/dashboards/website-monitoring.json dashboards/website-monitoring.json" && \
+             exit 1)
+
+      - name: Guard against .helmignore silently emptying .Files.Get (regression test)
+        # A gitignore-style .helmignore pattern that isn't anchored with a leading "/"
+        # matches directories of that name at ANY depth — e.g. an unanchored
+        # "dashboards/" also excludes files/dashboards/, which is what
+        # templates/grafana/configmap-dashboard-json.yaml loads via .Files.Get.
+        # That exact bug once shipped silently: .Files.Get returned "", the
+        # ConfigMap held an empty dashboard, and Grafana never showed it — with
+        # no error anywhere in `helm template`/`helm install` output. This step
+        # renders the packaged chart (not the source dir, since .helmignore only
+        # applies to `helm package`) and fails loudly if the dashboard JSON in
+        # the resulting ConfigMap comes back empty or truncated.
+        run: |
+          helm package . -d /tmp
+          helm template website-monitor /tmp/monitoring-pack-*.tgz \
+            --show-only templates/grafana/configmap-dashboard-json.yaml > /tmp/dashboard-cm.yaml
+          python3 -c "
+          import yaml, sys
+          docs = list(yaml.safe_load_all(open('/tmp/dashboard-cm.yaml')))
+          content = docs[0]['data']['website-monitoring.json']
+          print(f'Rendered dashboard JSON size from packaged chart: {len(content)} bytes')
+          if len(content) < 10000:
+              print('::error::Dashboard JSON in the packaged chart ConfigMap is suspiciously small.')
+              print('::error::Check .helmignore for unanchored patterns matching files/dashboards/.')
+              sys.exit(1)
+          import json
+          json.loads(content)
+          print('Dashboard JSON parses correctly from the packaged chart.')
+          "
 
       - name: Helm lint (strict)
         run: helm lint --strict .
@@ -42,7 +83,7 @@ jobs:
       - name: Render — standalone mode (default values)
         run: helm template website-monitor . --debug > /dev/null
 
-      - name: Render — operator mode (ServiceMonitor + PrometheusRule + Probe)
+      - name: Render — operator mode (ServiceMonitor + PrometheusRule + Probe), all target types
         run: |
           helm template website-monitor . \
             --set prometheus.enabled=false \
@@ -53,9 +94,22 @@ jobs:
             --set prometheusRule.enabled=true \
             --set prometheusRule.labels.release=kube-prometheus-stack \
             --set probe.enabled=true \
+            --set tcpTargets[0].name="DB" --set tcpTargets[0].host="db.example.com:5432" \
+            --set dnsTargets[0].name="My Domain" --set dnsTargets[0].host="example.com" \
+            --set icmpTargets[0].name="Gateway" --set icmpTargets[0].host="10.0.0.1" \
             --debug > /dev/null
 
-      - name: Render — all notifications enabled
+      - name: Render — DNS/TCP/ICMP targets in standalone mode
+        run: |
+          helm template website-monitor . \
+            --set tcpTargets[0].name="DB" --set tcpTargets[0].host="db.example.com:5432" \
+            --set dnsTargets[0].name="My Domain" --set dnsTargets[0].host="example.com" \
+            --set dnsTargets[1].name="Custom Resolver" --set dnsTargets[1].host="internal.example.com" --set dnsTargets[1].resolver="10.0.0.2:53" \
+            --set icmpTargets[0].name="Gateway" --set icmpTargets[0].host="10.0.0.1" \
+            --set blackboxExporter.privileged=true \
+            --debug > /dev/null
+
+      - name: Render — all notifications enabled (Slack + Discord together, PagerDuty, Opsgenie, webhook)
         run: |
           helm template website-monitor . \
             --set notifications.slack.enabled=true \
@@ -70,9 +124,159 @@ jobs:
             --set notifications.telegram.enabled=true \
             --set notifications.telegram.botToken=123:abc \
             --set notifications.telegram.chatId=-100 \
+            --set notifications.pagerduty.enabled=true \
+            --set notifications.pagerduty.routingKey=abcd1234 \
+            --set notifications.opsgenie.enabled=true \
+            --set notifications.opsgenie.apiKey=xyz \
+            --set notifications.webhook.enabled=true \
+            --set notifications.webhook.url=https://example.com/hook \
+            --show-only templates/alertmanager/configmap.yaml \
+            > /tmp/am-cm.yaml
+
+      - name: Validate rendered alertmanager.yml with amtool (catches config-level bugs helm template can't see)
+        run: |
+          python3 -c "
+          import yaml
+          docs = list(yaml.safe_load_all(open('/tmp/am-cm.yaml')))
+          open('/tmp/alertmanager.yml', 'w').write(docs[0]['data']['alertmanager.yml'])
+          "
+          docker run --rm --entrypoint /bin/amtool \
+            -v /tmp/alertmanager.yml:/tmp/alertmanager.yml \
+            prom/alertmanager:v0.27.0 check-config /tmp/alertmanager.yml
+
+      - name: Render prometheus.yml + rules (with SLO, remote_write, DNS targets) for promtool validation
+        run: |
+          helm template website-monitor . \
+            --set dnsTargets[0].name="My Domain" --set dnsTargets[0].host="example.com" \
+            --set tcpTargets[0].name="DB" --set tcpTargets[0].host="db.example.com:5432" \
+            --set prometheus.remoteWrite[0].url="https://example.com/api/prom/push" \
+            --set prometheus.remoteWrite[0].basic_auth.username="12345" \
+            --set prometheus.remoteWrite[0].basic_auth.password="secret" \
+            --set slo.enabled=true \
+            --show-only templates/prometheus/configmap.yaml \
+            > /tmp/prom-cm.yaml
+          mkdir -p /tmp/promtool/rules
+          python3 -c "
+          import yaml
+          docs = list(yaml.safe_load_all(open('/tmp/prom-cm.yaml')))
+          d = docs[0]['data']
+          open('/tmp/promtool/prometheus.yml', 'w').write(d['prometheus.yml'].replace('/etc/prometheus/rules/*.yml', 'rules/*.yml'))
+          open('/tmp/promtool/rules/website-alerts.yml', 'w').write(d['website-alerts.yml'])
+          "
+
+      - name: Validate rendered prometheus.yml + rules with promtool
+        run: |
+          docker run --rm --user root -v /tmp/promtool:/scratch --entrypoint /bin/promtool \
+            prom/prometheus:v2.51.0 check config /scratch/prometheus.yml
+
+      - name: Validate maintenance windows (Alertmanager time_intervals)
+        run: |
+          helm template website-monitor . \
+            --set maintenanceWindows[0].name=weekly-deploy \
+            --set maintenanceWindows[0].weekdays[0]=saturday \
+            --set maintenanceWindows[0].location=UTC \
+            --set maintenanceWindows[0].times[0].start_time=02:00 \
+            --set maintenanceWindows[0].times[0].end_time=04:00 \
+            --show-only templates/alertmanager/configmap.yaml \
+            > /tmp/am-mw.yaml
+          python3 -c "
+          import yaml
+          docs = list(yaml.safe_load_all(open('/tmp/am-mw.yaml')))
+          open('/tmp/alertmanager-mw.yml', 'w').write(docs[0]['data']['alertmanager.yml'])
+          "
+          docker run --rm --entrypoint /bin/amtool \
+            -v /tmp/alertmanager-mw.yml:/tmp/alertmanager.yml \
+            prom/alertmanager:v0.27.0 check-config /tmp/alertmanager.yml
+
+      - name: Validate escalation policy (Alertmanager route/receiver + Prometheus meta-alert)
+        run: |
+          helm template website-monitor . \
+            --set alerts.escalation.enabled=true \
+            --set notifications.escalation.pagerdutyRoutingKey=escalation-key \
+            --set notifications.escalation.opsgenieApiKey=escalation-opsgenie \
+            --set notifications.escalation.webhookUrl=https://example.com/escalation \
+            --show-only templates/alertmanager/configmap.yaml \
+            > /tmp/am-esc.yaml
+          python3 -c "
+          import yaml
+          docs = list(yaml.safe_load_all(open('/tmp/am-esc.yaml')))
+          open('/tmp/alertmanager-esc.yml', 'w').write(docs[0]['data']['alertmanager.yml'])
+          "
+          docker run --rm --entrypoint /bin/amtool \
+            -v /tmp/alertmanager-esc.yml:/tmp/alertmanager.yml \
+            prom/alertmanager:v0.27.0 check-config /tmp/alertmanager.yml
+          helm template website-monitor . \
+            --set alerts.escalation.enabled=true \
+            --show-only templates/prometheus/configmap.yaml \
+            > /tmp/prom-esc.yaml
+          mkdir -p /tmp/promtool-esc/rules
+          python3 -c "
+          import yaml
+          d = list(yaml.safe_load_all(open('/tmp/prom-esc.yaml')))[0]['data']
+          open('/tmp/promtool-esc/prometheus.yml', 'w').write(d['prometheus.yml'].replace('/etc/prometheus/rules/*.yml', 'rules/*.yml'))
+          open('/tmp/promtool-esc/rules/website-alerts.yml', 'w').write(d['website-alerts.yml'])
+          "
+          docker run --rm --user root -v /tmp/promtool-esc:/scratch --entrypoint /bin/promtool \
+            prom/prometheus:v2.51.0 check config /scratch/prometheus.yml
+
+      - name: Validate authenticated targets (headers/bearerToken/basicAuth)
+        run: |
+          helm template website-monitor . \
+            --set targets[0].name="Google" --set targets[0].url="https://google.com" \
+            --set targets[1].name="Internal API" --set targets[1].url="https://api.internal.example.com/healthz" \
+            --set targets[1].headers.X-API-Key=secret123 \
+            --set targets[2].name="Bearer API" --set targets[2].url="https://bearer.example.com" \
+            --set targets[2].bearerToken=tok123 \
+            --set targets[3].name="Basic Auth Site" --set targets[3].url="https://basic.example.com" \
+            --set targets[3].basicAuth.username=user --set targets[3].basicAuth.password=pass \
+            --set serviceMonitor.enabled=true --set probe.enabled=true \
+            --show-only templates/blackbox/configmap.yaml \
+            > /tmp/bb-auth.yaml
+          python3 -c "
+          import yaml
+          d = list(yaml.safe_load_all(open('/tmp/bb-auth.yaml')))[0]
+          open('/tmp/blackbox-auth.yml', 'w').write(d['data']['blackbox.yml'])
+          "
+          docker run --rm --user root -v /tmp/blackbox-auth.yml:/tmp/blackbox.yml \
+            --entrypoint /bin/blackbox_exporter \
+            prom/blackbox-exporter:v0.25.0 --config.check --config.file=/tmp/blackbox.yml
+
+      - name: Validate HA mode (StatefulSet, Alertmanager gossip clustering, NetworkPolicy)
+        run: |
+          helm template website-monitor . \
+            --set prometheus.replicaCount=2 \
+            --set alertmanager.replicaCount=3 \
+            --set networkPolicy.enabled=true \
+            --debug > /tmp/ha-render.yaml
+          grep -q "kind: StatefulSet" /tmp/ha-render.yaml
+          grep -q -- "--cluster.peer=" /tmp/ha-render.yaml
+          python3 -c "
+          import yaml
+          docs = list(yaml.safe_load_all(open('/tmp/ha-render.yaml')))
+          for d in docs:
+              if d and d.get('kind') == 'ConfigMap' and 'prometheus.yml' in (d.get('data') or {}):
+                  targets = d['data']['prometheus.yml']
+                  assert targets.count('alertmanager-0') >= 1 and targets.count('alertmanager-1') >= 1, 'expected all AM replicas in alerting targets'
+                  print('Prometheus alerting config fans out to all Alertmanager replicas: OK')
+          "
+
+      - name: Validate status page (Grafana anonymous access)
+        run: |
+          helm template website-monitor . \
+            --set grafana.statusPage.enabled=true \
+            --show-only templates/grafana/deployment.yaml | grep -q GF_AUTH_ANONYMOUS_ENABLED
+
+      - name: Render — podMonitoring opt-in RBAC (namespace-scoped and cluster-wide)
+        run: |
+          helm template website-monitor . \
+            --set podMonitoring.enabled=true \
+            --debug > /dev/null
+          helm template website-monitor . \
+            --set podMonitoring.enabled=true \
+            --set podMonitoring.namespaces='{*}' \
             --debug > /dev/null
 
-      - name: Render — Ingress, NetworkPolicy, PodDisruptionBudget
+      - name: Render — Ingress, NetworkPolicy (dynamic TCP ports + ICMP), PodDisruptionBudget
         run: |
           helm template website-monitor . \
             --set grafana.ingress.enabled=true \
@@ -81,18 +285,15 @@ jobs:
             --set prometheus.ingress.host=prometheus.test.com \
             --set networkPolicy.enabled=true \
             --set podDisruptionBudget.enabled=true \
+            --set tcpTargets[0].name="Custom" --set tcpTargets[0].host="app.example.com:8443" \
+            --set icmpTargets[0].name="Gateway" --set icmpTargets[0].host="10.0.0.1" \
+            --set blackboxExporter.privileged=true \
             --debug > /dev/null
 
       - name: Render — existingSecret for Grafana
         run: |
           helm template website-monitor . \
             --set grafana.existingSecret=my-grafana-secret \
-            --debug > /dev/null
-
-      - name: Render — ICMP privileged mode
-        run: |
-          helm template website-monitor . \
-            --set blackboxExporter.privileged=true \
             --debug > /dev/null
 
   integration-test:

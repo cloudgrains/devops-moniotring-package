@@ -1,6 +1,6 @@
 {{- if .Values.alertmanager.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "monitoring-pack.alertmanager.fullname" . }}
   namespace: {{ include "monitoring-pack.namespace" . }}
@@ -13,8 +13,8 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ .Values.alertmanager.replicaCount }}
-  strategy:
-    type: Recreate
+  serviceName: {{ include "monitoring-pack.alertmanager.fullname" . }}-headless
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       {{- include "monitoring-pack.alertmanager.selectorLabels" . | nindent 6 }}
@@ -42,12 +42,31 @@ spec:
             - "--config.file=/etc/alertmanager/alertmanager.yml"
             - "--storage.path=/alertmanager"
             - "--web.listen-address=:9093"
+            {{- if gt (.Values.alertmanager.replicaCount | int) 1 }}
+            # Gossip-based HA clustering: every replica peers with every other
+            # replica (including its own address, which Alertmanager no-ops on
+            # harmlessly) so duplicate alerts from independent Prometheus
+            # replicas get deduplicated and only one notification goes out.
+            - "--cluster.listen-address=0.0.0.0:9094"
+            {{- range $i := until (int .Values.alertmanager.replicaCount) }}
+            - "--cluster.peer={{ include "monitoring-pack.alertmanager.fullname" $ }}-{{ $i }}.{{ include "monitoring-pack.alertmanager.fullname" $ }}-headless.{{ include "monitoring-pack.namespace" $ }}.svc:9094"
+            {{- end }}
+            {{- else }}
             - "--cluster.listen-address="    # Disable HA clustering (single replica)
+            {{- end }}
             - "--log.level=info"
           ports:
             - name: http
               containerPort: 9093
               protocol: TCP
+            {{- if gt (.Values.alertmanager.replicaCount | int) 1 }}
+            - name: cluster-tcp
+              containerPort: 9094
+              protocol: TCP
+            - name: cluster-udp
+              containerPort: 9094
+              protocol: UDP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /-/healthy
@@ -82,13 +101,10 @@ spec:
         - name: config
           configMap:
             name: {{ include "monitoring-pack.alertmanager.fullname" . }}
+        {{- if not .Values.alertmanager.persistence.enabled }}
         - name: data
-          {{- if .Values.alertmanager.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "monitoring-pack.alertmanager.fullname" . }}
-          {{- else }}
           emptyDir: {}
-          {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.alertmanager.nodeSelector }}
@@ -103,4 +119,25 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if .Values.alertmanager.persistence.enabled }}
+  # One PVC per replica — see templates/prometheus/statefulset.yaml for why
+  # this is safe across upgrades, scaling, and helm uninstall.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "monitoring-pack.labels" . | nindent 10 }}
+          app.kubernetes.io/component: alertmanager
+        annotations:
+          "helm.sh/resource-policy": keep
+      spec:
+        accessModes:
+          - {{ .Values.alertmanager.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.alertmanager.persistence.size }}
+        {{- if .Values.alertmanager.persistence.storageClass }}
+        storageClassName: {{ .Values.alertmanager.persistence.storageClass }}
+        {{- end }}
+  {{- end }}
 {{- end }}

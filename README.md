@@ -24,8 +24,11 @@
    - [Integration with kube-prometheus-stack](#integration-with-kube-prometheus-stack)
 7. [Configuration Guide](#configuration-guide)
    - [Adding Websites](#adding-websites)
+   - [Monitoring Authenticated Endpoints](#monitoring-authenticated-endpoints)
    - [Probe Types](#probe-types)
+   - [TCP, DNS, and ICMP Targets](#tcp-dns-and-icmp-targets)
    - [Alert Thresholds](#alert-thresholds)
+   - [SLO / Error Budget Alerting](#slo--error-budget-alerting)
    - [Environment Labels](#environment-and-team-labels)
    - [Persistent Storage](#persistent-storage)
    - [Exposing Grafana](#exposing-grafana)
@@ -35,17 +38,25 @@
    - [Discord](#discord)
    - [Microsoft Teams](#microsoft-teams)
    - [Telegram](#telegram)
+   - [PagerDuty](#pagerduty)
+   - [Opsgenie](#opsgenie)
+   - [Generic Webhook](#generic-webhook)
 9. [Grafana Dashboard](#grafana-dashboard)
+   - [Public Status Page](#public-status-page)
 10. [Alert Rules Reference](#alert-rules-reference)
+    - [Maintenance Windows](#maintenance-windows)
+    - [Escalation Policies](#escalation-policies)
 11. [Multiple Environments](#multiple-environments)
-12. [Security Hardening](#security-hardening)
-13. [Upgrade](#upgrade)
-14. [Uninstall](#uninstall)
-15. [Troubleshooting](#troubleshooting)
-16. [FAQ](#faq)
-17. [Dashboard Screenshots](#dashboard-screenshots)
-18. [Contributing](#contributing)
-19. [Changelog](#changelog)
+    - [Multi-Cluster Visibility (remote_write)](#multi-cluster-visibility-remote_write)
+12. [High Availability](#high-availability)
+13. [Security Hardening](#security-hardening)
+14. [Upgrade](#upgrade)
+15. [Uninstall](#uninstall)
+16. [Troubleshooting](#troubleshooting)
+17. [FAQ](#faq)
+18. [Dashboard Screenshots](#dashboard-screenshots)
+19. [Contributing](#contributing)
+20. [Changelog](#changelog)
 
 ---
 
@@ -353,6 +364,30 @@ targets:
 
 **Tip:** SSL certificates are automatically checked for all `https://` URLs. You don't need to add anything extra for SSL monitoring.
 
+### Monitoring Authenticated Endpoints
+
+Set `headers`, `bearerToken`, or `basicAuth` on any target and Monitoring Pack generates a dedicated Blackbox Exporter module for it — no manual ConfigMap editing needed. Use at most one of the three per target:
+
+```yaml
+targets:
+  - name: Internal API
+    url: https://api.internal.example.com/healthz
+    headers:
+      X-API-Key: "your-api-key"
+
+  - name: Partner Webhook Health
+    url: https://partner.example.com/status
+    bearerToken: "your-bearer-token"
+
+  - name: Legacy Admin Panel
+    url: https://admin.example.com
+    basicAuth:
+      username: "monitoring"
+      password: "your-password"
+```
+
+Store real credentials in a Kubernetes Secret and inject them via `--set-file`/CI secrets rather than committing them to `values.yaml`.
+
 ### Probe Types
 
 The `module` field controls what kind of check is performed:
@@ -378,10 +413,21 @@ tcpTargets:
     host: "cache.example.com:6379"
     interval: 30s
 
-# DNS — verify a domain resolves
+# DNS — verify a domain resolves. Each target is queried against a real
+# resolver (dns.defaultResolver below), so "host" is the domain you want
+# resolved, NOT a DNS server.
 dnsTargets:
   - name: Main Domain
     host: "example.com"
+  - name: Internal Domain
+    host: "internal.corp.local"
+    resolver: "10.0.0.2:53"   # Override the default resolver for this target
+    recordType: "A"           # A, AAAA, MX, TXT, CNAME, NS, SOA, SRV (default: A)
+
+# Default resolver used to answer dnsTargets queries above. Change this if
+# public resolvers are blocked from your cluster's egress.
+dns:
+  defaultResolver: "1.1.1.1:53"
 
 # ICMP (Ping) — requires privileged: true!
 icmpTargets:
@@ -391,6 +437,15 @@ icmpTargets:
 blackboxExporter:
   privileged: true   # Required for ICMP
 ```
+
+> **Why does DNS need a "resolver"?** Blackbox Exporter's DNS prober queries
+> whatever address you give it as `target` and asks it to resolve a domain
+> name fixed in the module config — it does not support "check if this
+> domain resolves" as a single dynamic parameter. Monitoring Pack works
+> around this by generating one Blackbox Exporter module per DNS target
+> (with `query_name` set to your domain) and scraping it against a resolver.
+> This is also why `dnsTargets` needs a real, reachable DNS server address —
+> pointing `resolver` at the domain itself won't do what you'd expect.
 
 ### Alert Thresholds
 
@@ -409,6 +464,38 @@ alerts:
   downFor: "1m"        # Must be down for 1 minute before alerting
                        # (prevents false alarms from brief hiccups)
 ```
+
+### SLO / Error Budget Alerting
+
+`WebsiteDown` tells you a site is down *right now*. That's not the same as
+"are we on track to meet our reliability target this month?" — a site that
+flaps between up and down for hours can burn through a whole month's error
+budget without ever failing the 1-minute `downFor` threshold. Monitoring Pack
+adds Google SRE workbook-style **multi-window multi-burn-rate** alerting on
+top of `WebsiteDown` to catch that:
+
+```yaml
+slo:
+  enabled: true
+  objectivePercent: 99.9   # Target availability, e.g. 99.9 = "three nines"
+  window: "30d"            # Rolling window for the error-budget-remaining calculation
+```
+
+This adds two alerts, evaluated across every HTTP(S) target:
+
+| Alert | Fires when | Severity | Time to fire |
+|-------|-----------|----------|---------------|
+| `ErrorBudgetBurnFast` | Burning the error budget at >14.4x the sustainable rate (1h **and** 5m windows) | 🔴 Critical | ~2 min |
+| `ErrorBudgetBurnSlow` | Burning the error budget at >6x the sustainable rate (6h **and** 30m windows) | 🟡 Warning | ~15 min |
+
+The 14.4x/6x multipliers are the standard values from Google's SRE workbook,
+calibrated for a 30-day rolling window regardless of what you set
+`slo.window` to (changing `window` only affects the error-budget-remaining
+number shown on the dashboard, not the burn-rate alert calibration).
+
+The dashboard's **🎯 SLO & Error Budget** row shows remaining budget per
+target (now and over time) and a compliance table sorted worst-first, so the
+target closest to breaching its objective always surfaces at the top.
 
 ### Environment and Team Labels
 
@@ -646,11 +733,69 @@ notifications:
 
 ---
 
+### PagerDuty
+
+**Step 1:** In PagerDuty, create a Service (or use an existing one) → Integrations → "Add an integration" → choose **Events API v2**
+
+**Step 2:** Copy the **Integration Key**
+
+**Step 3:**
+```yaml
+notifications:
+  pagerduty:
+    enabled: true
+    routingKey: "your-integration-key"
+    severityLabel: "severity"   # Alert label to map to PagerDuty severity (critical/warning)
+```
+
+Critical alerts page immediately; warning alerts create a low-urgency incident. Resolved alerts automatically resolve the PagerDuty incident.
+
+---
+
+### Opsgenie
+
+**Step 1:** In Opsgenie, go to Teams → your team → Integrations → Add integration → **API**
+
+**Step 2:** Copy the API key
+
+**Step 3:**
+```yaml
+notifications:
+  opsgenie:
+    enabled: true
+    apiKey: "your-api-key"
+    apiUrl: "https://api.opsgenie.com/"   # EU tenants: https://api.eu.opsgenie.com/
+```
+
+Critical alerts are tagged priority `P1`; everything else is `P3`.
+
+---
+
+### Generic Webhook
+
+For incident tools without a native receiver above (Jira Service Management, ServiceNow, internal automation, n8n, etc.), Alertmanager can POST its raw JSON payload to any URL:
+
+```yaml
+notifications:
+  webhook:
+    enabled: true
+    url: "https://your-tool.example.com/webhook"
+    basicAuth:
+      username: ""   # Optional
+      password: ""
+```
+
+See the [Alertmanager webhook payload format](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config) for what your endpoint will receive.
+
+---
+
 ## Grafana Dashboard
 
 The **Website Monitoring Dashboard** is automatically provisioned when Grafana starts. You don't need to import anything manually.
 
 To access: open Grafana → Dashboards → "Website Monitoring Dashboard"
+
+Use the **Target** dropdown at the top of the dashboard to drill down into one or more specific targets — every panel (including the summary stats) filters to your selection. Leave it on "All" for the fleet-wide view.
 
 ### Dashboard Sections
 
@@ -666,6 +811,8 @@ The dashboard is organized with the most critical information at the top:
 | **🛡️ TLS & DNS Details** | TLS version table + DNS lookup time chart |
 | **📈 Availability History (SLA)** | Probe success history + SLA table (1h / 6h / 24h / 7d / 30d) |
 | **🔌 TCP / DNS / ICMP** | Collapsed row — expand to see TCP/DNS/ping probe results |
+| **🎯 SLO & Error Budget** | Error budget remaining (now + trend) and a compliance table sorted worst-first for fast root-cause triage |
+| **📶 Latency Percentiles** | p50/p95/p99 response latency per target over a rolling 1h window |
 
 Dashboard auto-refreshes every **30 seconds**.
 
@@ -681,11 +828,30 @@ grafana:
 
 Or import it manually: Dashboards → Import → paste the JSON from `dashboards/website-monitoring.json`.
 
+### Public Status Page
+
+Publish the dashboard for anonymous viewing — combine with `grafana.ingress` for a Better Stack/Statuspage-style public page:
+
+```yaml
+grafana:
+  statusPage:
+    enabled: true
+  ingress:
+    enabled: true
+    className: nginx
+    host: status.example.com
+    tls:
+      - secretName: status-tls
+        hosts: [status.example.com]
+```
+
+Visitors land directly on the Website Monitoring Dashboard with no login prompt. **Read this before enabling:** Grafana's anonymous access is org-wide, not scoped to one dashboard — anonymous Viewers can open any other dashboard in the org and run ad-hoc queries against the Prometheus datasource. Only enable this on a Grafana instance with nothing else in it you'd mind being public. See the "PUBLIC STATUS PAGE" comment in `values.yaml` for the full trade-off versus Grafana's newer (but Helm-unfriendly, API-provisioned) per-dashboard public-dashboards feature.
+
 ---
 
 ## Alert Rules Reference
 
-12 alert rules are included, organized into 4 groups:
+14 alert rules plus 6 recording rules are included, organized into 5 groups:
 
 ### Website Availability
 
@@ -719,7 +885,16 @@ Or import it manually: Dashboards → Import → paste the JSON from `dashboards
 |-------|-------------|---------|
 | `BlackboxExporterDown` | Blackbox Exporter unreachable for 2 minutes | 🔴 Critical |
 
-All thresholds are configurable in `values.yaml` under the `alerts` key.
+### SLO / Error Budget
+
+See [SLO / Error Budget Alerting](#slo--error-budget-alerting) for the full explanation.
+
+| Alert | When it fires | Severity |
+|-------|-------------|---------|
+| `ErrorBudgetBurnFast` | Burning the error budget >14.4x sustainable rate (1h and 5m) | 🔴 Critical |
+| `ErrorBudgetBurnSlow` | Burning the error budget >6x sustainable rate (6h and 30m) | 🟡 Warning |
+
+All thresholds are configurable in `values.yaml` under the `alerts` and `slo` keys.
 
 ### Alert Timing
 
@@ -754,6 +929,46 @@ To avoid alert spam, firing `WebsiteDown` automatically suppresses these alerts 
 - `SlowResponseTimeWarning` / `SlowResponseTimeCritical` — response time is meaningless when site is unreachable
 
 If `BlackboxExporterDown` fires, **all** probe alerts are suppressed (they'd all be false positives).
+
+### Maintenance Windows
+
+Silence notification delivery during planned maintenance without touching alert rules or manually creating Alertmanager silences (which reset on every restart unless persistence is enabled). Backed natively by Alertmanager's `time_intervals` — no extra components required. Alerts still evaluate and remain visible in the Prometheus/Alertmanager UIs; only notification delivery is muted.
+
+```yaml
+maintenanceWindows:
+  - name: weekly-deploy-window
+    weekdays: ["saturday"]              # monday..sunday
+    times:
+      - start_time: "02:00"
+        end_time: "04:00"
+    location: "UTC"                     # IANA timezone, e.g. "America/New_York"
+
+  - name: black-friday-freeze
+    months: ["november"]
+    daysOfMonth: ["24:29"]
+    location: "UTC"
+```
+
+Multiple entries are combined — if any window is currently active, notifications are muted. See [Alertmanager's `time_intervals` docs](https://prometheus.io/docs/alerting/latest/configuration/#time_interval-0) for the full range/syntax options (`weekdays`, `daysOfMonth`, `months`, `years`, `times`).
+
+### Escalation Policies
+
+Most teams without their own PagerDuty/Opsgenie escalation chain still want one basic guarantee: *if a critical alert sits unresolved for N minutes, tell someone else too.* Monitoring Pack implements this generically over Prometheus's own `ALERTS` metric — it doesn't matter which alert it is (`WebsiteDown`, `SSLCertExpired`, `ErrorBudgetBurnFast`, anything with `severity: critical`), no per-alert duplication needed:
+
+```yaml
+alerts:
+  escalation:
+    enabled: true
+    after: "15m"   # Escalate if still critical after this long
+
+notifications:
+  escalation:
+    pagerdutyRoutingKey: ""   # Typically a secondary on-call schedule
+    opsgenieApiKey: ""
+    webhookUrl: ""
+```
+
+This *adds* a channel on top of the normal critical routing — it doesn't replace it. The escalation notification includes `original_alertname` so you know which underlying alert triggered it, e.g. "ESCALATION: WebsiteDown unresolved for over 15m". Set at least one of the three channels above or escalation has nothing to notify.
 
 ---
 
@@ -821,9 +1036,55 @@ helm install monitor-staging . \
 
 Prometheus metrics from each instance are labeled with `environment="production"` or `environment="staging"`, so you can filter in dashboards and alerts.
 
+### Multi-Cluster Visibility (remote_write)
+
+Each cluster's Monitoring Pack install has its own local Prometheus with its own retention window — great for alerting, but not for a single pane of glass across clusters or long-term trend analysis. Rather than build a bespoke federation feature, point every cluster at the same remote-write endpoint (Thanos, Mimir, Cortex, Grafana Cloud, or a central Prometheus) and query them together upstream:
+
+```yaml
+prometheus:
+  # This is a raw passthrough to Prometheus's native remote_write config, so
+  # field names must match Prometheus's own schema (snake_case) — not the
+  # camelCase convention used elsewhere in this values.yaml.
+  remoteWrite:
+    - url: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
+      basic_auth:
+        username: "12345"
+        password: "<grafana-cloud-api-key>"
+      write_relabel_configs:
+        - source_labels: [__name__]
+          regex: "probe_.*|ALERTS"
+          action: keep
+```
+
+The `external_labels` block (`cluster: <release-name>`, `namespace: <namespace>`) is already set on every Prometheus instance this chart deploys, so samples from different clusters/releases remain distinguishable once they land in the shared backend.
+
+---
+
+## High Availability
+
+Prometheus and Alertmanager are `StatefulSet`s (not `Deployment`s) with **one PersistentVolumeClaim per replica** via `volumeClaimTemplates` — the previous Deployment-plus-single-shared-PVC design could not safely run more than one replica of either component. This is opt-in: the default `replicaCount: 1` for both keeps today's single-instance footprint unchanged.
+
+```yaml
+prometheus:
+  replicaCount: 2
+alertmanager:
+  replicaCount: 2   # or 3 — Alertmanager gossip clustering tolerates any N
+```
+
+**How it works:**
+- **Prometheus** — every replica runs the identical scrape config and alert rules independently; there's no sharding. Each pushes every alert it evaluates to *every* Alertmanager replica (not through a load-balanced Service), which is the standard Prometheus-recommended HA pattern.
+- **Alertmanager** — replicas form a real gossip cluster (`--cluster.peer`, one per replica, discovered via a headless Service) so that receiving the same alert from multiple Prometheus replicas doesn't produce duplicate notifications — the peers share notification-log state and deduplicate. Verify clustering came up with `curl localhost:9093/api/v2/status | jq .cluster` — `status` should read `"ready"` with all replicas listed as peers.
+- **Grafana and Blackbox Exporter** remain `Deployment`s — Grafana's `replicaCount` is single-instance today (no session/state clustering wired up), and Blackbox Exporter is stateless so a `Deployment` is already sufficient; scale it via `blackboxExporter.replicaCount` if probe volume needs more throughput.
+
+**NetworkPolicy**: when `networkPolicy.enabled: true` and `alertmanager.replicaCount > 1`, gossip traffic (port 9094, TCP+UDP) is automatically allowed between Alertmanager pods specifically — no manual policy edits needed.
+
+**What HA does *not* give you**: this is HA for a *single cluster's* Monitoring Pack install (survives a pod/node loss), not cross-cluster redundancy or long-term storage beyond `prometheus.retention`. For that, see [Multi-Cluster Visibility (remote_write)](#multi-cluster-visibility-remote_write) above — point every cluster's replicas at a shared Thanos/Mimir/Grafana Cloud backend.
+
 ---
 
 ## Upgrade
+
+> **Upgrading from a pre-HA release (Prometheus/Alertmanager were `Deployment`s, not `StatefulSet`s)?** Read this first. Helm will delete the old `Deployment`s and create `StatefulSet`s in their place — this is expected and safe. However, the *PersistentVolumeClaim naming scheme changes*: the old design used one shared PVC per component (e.g. `website-monitor-monitoring-pack-prometheus`); the new `StatefulSet` `volumeClaimTemplates` design names PVCs per-replica (e.g. `data-website-monitor-monitoring-pack-prometheus-0`). **Your new pods will start with empty storage** — the old PVC is retained (not deleted, per this chart's usual `helm.sh/resource-policy: keep` guarantee) but no longer attached to anything. For most users this is an acceptable one-time reset of metric history/notification state (it's monitoring data, not business data) — Prometheus/Alertmanager will simply start re-accumulating from zero. If you need to preserve history across this specific upgrade, back up via `promtool tsdb` snapshot beforehand, or pre-provision a PV statically bound to the new PVC name from your old volume before running `helm upgrade` (procedure depends on your storage provisioner).
 
 After editing `values.yaml`, apply changes with:
 
@@ -1016,7 +1277,10 @@ A: Alerts for SSL have a `30m` "for" duration — the condition must be true for
 A: Yes — use different Helm release names and namespaces (see [Multiple Environments](#multiple-environments)).
 
 **Q: How do I suppress alerts for a planned maintenance window?**
-A: Use Alertmanager silences: open Alertmanager (port 9093) → Silences → New Silence. Set duration and matchers (e.g., `instance="https://example.com"`).
+A: For recurring windows (e.g. every Saturday 2–4am), configure `maintenanceWindows` in values.yaml — see [Maintenance Windows](#maintenance-windows). For a one-off, ad-hoc window, use an Alertmanager silence instead: open Alertmanager (port 9093) → Silences → New Silence, and set duration and matchers (e.g., `instance="https://example.com"`).
+
+**Q: My `dnsTargets` check keeps failing / times out.**
+A: Make sure `dns.defaultResolver` (or the target's `resolver` override) points at a DNS server your cluster can actually reach — Blackbox Exporter queries that address directly and asks it to resolve `host`. The default (`1.1.1.1:53`) requires outbound internet access; if your cluster's egress blocks that, point it at your internal resolver (e.g. `10.0.0.2:53`) instead. See [TCP, DNS, and ICMP Targets](#tcp-dns-and-icmp-targets) for why `host` and `resolver` are different things.
 
 ---
 
@@ -1034,16 +1298,16 @@ monitoring-pack/
 │   │                                   #   configmap and PrometheusRule CRD)
 │   ├── NOTES.txt                       # Post-install message
 │   ├── serviceaccount.yaml             # RBAC: ServiceAccount
-│   ├── clusterrole.yaml                # RBAC: ClusterRole + Binding
+│   ├── rbac.yaml                       # RBAC: Role/ClusterRole + Binding (opt-in, see podMonitoring)
 │   ├── servicemonitor.yaml             # Prometheus Operator: ServiceMonitor
 │   ├── prometheusrule.yaml             # Prometheus Operator: PrometheusRule
 │   ├── probe.yaml                      # Prometheus Operator: Probe CRD
 │   │
 │   ├── prometheus/
 │   │   ├── configmap.yaml              # prometheus.yml + alert rules
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── pvc.yaml
+│   │   ├── statefulset.yaml            # 1 PVC per replica (replicaCount for HA)
+│   │   ├── service.yaml                # ClusterIP — for queries
+│   │   └── service-headless.yaml       # Governs the StatefulSet's pod DNS
 │   │
 │   ├── grafana/
 │   │   ├── configmap-datasources.yaml  # Auto-provisions Prometheus datasource
@@ -1057,9 +1321,9 @@ monitoring-pack/
 │   │
 │   ├── alertmanager/
 │   │   ├── configmap.yaml              # alertmanager.yml with routing + receivers
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── pvc.yaml
+│   │   ├── statefulset.yaml            # 1 PVC/replica + gossip clustering when replicaCount > 1
+│   │   ├── service.yaml                # ClusterIP — for the API/UI
+│   │   └── service-headless.yaml       # StatefulSet pod DNS + gossip peer discovery
 │   │
 │   └── blackbox/
 │       ├── configmap.yaml              # blackbox.yml with probe modules
@@ -1072,6 +1336,7 @@ monitoring-pack/
 │
 ├── dashboards/
 │   └── website-monitoring.json         # Reference copy — import into any Grafana
+│                                        # (CI fails if this drifts from files/dashboards/)
 │
 ├── alert-rules/
 │   └── website-alerts.yaml             # Reference copy of alert rules
@@ -1096,6 +1361,20 @@ monitoring-pack/
 ---
 
 ## Security Hardening
+
+### RBAC is least-privilege by default
+
+By default, Monitoring Pack's ServiceAccount has **no Kubernetes API permissions at all** — its job is probing external websites/SSL/TCP/DNS endpoints, which needs zero cluster access. The only exception is the optional, off-by-default `podMonitoring` bonus feature (scraping in-cluster pods annotated with `prometheus.io/scrape: "true"`):
+
+```yaml
+podMonitoring:
+  enabled: false     # Set true to enable — see below for RBAC scope
+  namespaces: []      # [] = release namespace only (Role, no cluster access)
+                      # ["*"] = every namespace (ClusterRole + node-level access)
+                      # ["ns1", "ns2"] = specific namespaces (Role per namespace)
+```
+
+Leaving `namespaces` empty grants a namespace-scoped `Role` (services/endpoints/pods, no cluster resources). Only `["*"]` creates a `ClusterRole` with node-level access (`nodes`, `nodes/proxy`, `nodes/metrics`, `ingresses`) — reserve that for clusters where you actually want fleet-wide pod discovery.
 
 ### Use an existing Secret for Grafana credentials
 
@@ -1124,7 +1403,7 @@ networkPolicy:
   enabled: true
 ```
 
-Requires a CNI plugin that enforces NetworkPolicy (Calico, Cilium, Weave Net).
+Requires a CNI plugin that enforces NetworkPolicy (Calico, Cilium, Weave Net). Egress ports for `tcpTargets` are derived automatically from the ports you've configured — no manual port list to maintain. Vanilla Kubernetes `NetworkPolicy` cannot match the ICMP protocol specifically, so when `icmpTargets` is set, Blackbox Exporter's egress rule allows all outbound traffic (documented inline in the generated `NetworkPolicy`); tighten this further with your CNI's extensions (e.g. Calico `GlobalNetworkPolicy`) if you need ICMP scoped down too.
 
 ### Enable PodDisruptionBudgets
 
@@ -1183,6 +1462,10 @@ In short:
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v1.1.0** — Rich Slack alert format (colored sidebar, emoji, resolved notifications), faster alert delivery (~2.5 min worst case), persistence enabled by default, 10 bug fixes including scrape timeout mismatch and alert inhibition rules.
+**Latest: v1.3.0** — High Availability (Prometheus/Alertmanager converted to `StatefulSet`s with per-replica storage and real Alertmanager gossip clustering), authenticated-endpoint monitoring (headers/bearer/basic auth per target), generic escalation policies, and an opt-in public status page (Grafana anonymous access). Every feature verified against a real kind cluster deployment. See the [Upgrade](#upgrade) section for a PVC-naming migration note if you're running an earlier version with persistence enabled.
+
+**v1.2.0** — SLO/error-budget burn-rate alerting, PagerDuty/Opsgenie/webhook receivers, native maintenance windows, `remote_write` for multi-cluster visibility, dashboard drill-down variable + SLO and latency-percentile panels. **Fixes a bug present since at least v1.1.0 where the auto-provisioned Grafana dashboard silently never loaded** (a `.helmignore` pattern matching bug — see CHANGELOG), plus a DNS-probe correctness bug and a pre-existing Slack+Discord config conflict. RBAC is now least-privilege by default (opt-in `podMonitoring`). Every fix in this release was verified against a real kind cluster deployment, not just `helm template`.
+
+**v1.1.0** — Rich Slack alert format (colored sidebar, emoji, resolved notifications), faster alert delivery (~2.5 min worst case), persistence enabled by default, 10 bug fixes including scrape timeout mismatch and alert inhibition rules.
 
 **v1.0.0** — Initial release with Prometheus, Grafana, Alertmanager, Blackbox Exporter, 12 alert rules, pre-built dashboard, 5 notification channels, and Prometheus Operator CRD integration.

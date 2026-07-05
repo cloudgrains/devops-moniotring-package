@@ -31,6 +31,24 @@ targets:
     interval: 60s    # How often to probe (overrides prometheus.scrapeInterval)
     module: http_2xx # Probe type — see "Probe Modules" in README
 
+  - name: cloudgrains
+    url: https://cloudgrains.com
+    interval: 60s
+    module: http_2xx
+
+# Monitoring an authenticated endpoint (API behind an API key, internal tool
+# behind Basic Auth, etc.) — set headers/bearerToken/basicAuth on the target
+# and Monitoring Pack generates a dedicated Blackbox Exporter module for it.
+# Only one of these three should be set per target.
+# - name: Internal API
+#   url: https://api.internal.example.com/healthz
+#   headers:
+#     X-API-Key: "your-api-key"
+#   # bearerToken: "your-bearer-token"
+#   # basicAuth:
+#   #   username: "monitoring"
+#   #   password: "your-password"
+
 
 # TCP targets — verify a host:port is accepting connections
 tcpTargets: []
@@ -38,11 +56,21 @@ tcpTargets: []
 #   host: "db.example.com:5432"
 #   interval: 30s
 
-# DNS targets — verify that a hostname resolves correctly
+# DNS targets — verify that a hostname resolves correctly.
+# Each target is queried against a real DNS resolver (see dns.defaultResolver
+# below), so "host" is the domain you want resolved — NOT a DNS server.
 dnsTargets: []
 # - name: My Domain
 #   host: "example.com"
+#   recordType: "A"        # A, AAAA, MX, TXT, CNAME, NS ... (default: A)
+#   resolver: ""            # Override dns.defaultResolver for this target only
 #   interval: 60s
+
+# Default DNS resolver used to answer dnsTargets queries above.
+# Change this if public resolvers are blocked from your cluster's egress,
+# or point it at your internal DNS server (e.g. "10.0.0.2:53").
+dns:
+  defaultResolver: "1.1.1.1:53"
 
 # ICMP (Ping) targets — requires blackboxExporter.privileged: true
 icmpTargets: []
@@ -61,6 +89,34 @@ alerts:
     warning: 2.0       # Alert when response time exceeds this (seconds)
     critical: 5.0      # Critical threshold (seconds)
   downFor: "1m"        # How long a target must be down before firing
+
+  # Escalation policy — if a critical alert (WebsiteDown or SSLCertExpired)
+  # is STILL firing after this long, additionally notify the escalation
+  # channel(s) below, on top of (not instead of) the normal critical channels.
+  # This is what most teams without their own PagerDuty/Opsgenie escalation
+  # chain reach for: "if nobody has fixed this in 15 minutes, page someone else".
+  escalation:
+    enabled: false
+    after: "15m"       # Must remain firing this long before escalating
+
+# ------------------------------------------------------------------------------
+# SLO / ERROR BUDGET
+#
+# Adds Google SRE-style multi-window multi-burn-rate alerting on top of the
+# simple WebsiteDown alert: instead of "is it down right now", this tracks
+# "are we burning our error budget too fast", which pages earlier for
+# sustained degradation and later (or never) for brief blips — cutting alert
+# fatigue while catching real trends sooner.
+#
+# Applies uniformly across all HTTP(S) targets. Adds:
+#   - <objective>% rolling availability + error-budget-remaining recording rules
+#   - ErrorBudgetBurnFast  (severity: critical) — ~2 min to fire, page-worthy
+#   - ErrorBudgetBurnSlow  (severity: warning)  — ~15 min to fire, ticket-worthy
+# ------------------------------------------------------------------------------
+slo:
+  enabled: true
+  objectivePercent: 99.9   # Target availability, e.g. 99.9 = "three nines"
+  window: "30d"            # Rolling window used for error-budget-remaining
 
 # ------------------------------------------------------------------------------
 # NOTIFICATIONS — Enable one or more channels below
@@ -101,6 +157,63 @@ notifications:
     enabled: false
     botToken: ""           # Token from @BotFather
     chatId: ""             # Chat or group ID (negative number for groups)
+
+  # ── PagerDuty ────────────────────────────────────────────────────────────────
+  # Create an "Events API v2" integration on a PagerDuty service and paste its
+  # integration key below. Critical alerts trigger a page; others create a low
+  # urgency incident.
+  pagerduty:
+    enabled: false
+    routingKey: ""          # PagerDuty Events API v2 integration key
+    severityLabel: "severity"  # Alert label used to derive PagerDuty severity
+
+  # ── Opsgenie ─────────────────────────────────────────────────────────────────
+  opsgenie:
+    enabled: false
+    apiKey: ""              # Opsgenie API integration key
+    apiUrl: "https://api.opsgenie.com/"   # EU tenants: https://api.eu.opsgenie.com/
+
+  # ── Generic webhook ──────────────────────────────────────────────────────────
+  # Delivers the raw Alertmanager webhook payload — use this to integrate with
+  # incident tools that aren't natively supported (Jira Service Management,
+  # ServiceNow, custom automation, n8n, etc.)
+  webhook:
+    enabled: false
+    url: ""
+    basicAuth:
+      username: ""
+      password: ""
+
+  # ── Escalation channel ───────────────────────────────────────────────────────
+  # Used only when alerts.escalation.enabled: true, and only for alerts that
+  # have stayed critical past alerts.escalation.after. Set at least one of
+  # these — if none are set, escalation.enabled has no effect. Reuses the
+  # PagerDuty severity mapping, so a distinct routing key here typically maps
+  # to a secondary on-call schedule or a different escalation policy tier.
+  escalation:
+    pagerdutyRoutingKey: ""
+    opsgenieApiKey: ""
+    webhookUrl: ""
+
+# ------------------------------------------------------------------------------
+# MAINTENANCE WINDOWS
+# Silence ALL notifications during planned maintenance without touching alert
+# rules or manually creating Alertmanager silences. Backed natively by
+# Alertmanager's time_intervals — no extra components required.
+# Alerts still evaluate and appear in Prometheus/Alertmanager UIs; only
+# notification delivery is muted during the window.
+# ------------------------------------------------------------------------------
+maintenanceWindows: []
+# - name: weekly-deploy-window
+#   weekdays: ["saturday"]              # monday..sunday
+#   times:
+#     - start_time: "02:00"
+#       end_time: "04:00"
+#   location: "UTC"                     # IANA timezone, e.g. "America/New_York"
+# - name: black-friday-freeze
+#   months: ["november"]
+#   daysOfMonth: ["24:29"]
+#   location: "UTC"
 
 # ------------------------------------------------------------------------------
 # PROMETHEUS OPERATOR INTEGRATION
@@ -145,6 +258,24 @@ probe:
   proberUrl: ""
 
 # ------------------------------------------------------------------------------
+# KUBERNETES POD AUTO-DISCOVERY (optional, disabled by default)
+#
+# Monitoring Pack's core job is external website/SSL/TCP/DNS probing, which
+# needs zero Kubernetes RBAC beyond reading its own ConfigMaps. This section
+# is an opt-in bonus: scrape in-cluster pods annotated with
+# `prometheus.io/scrape: "true"`.
+#
+# Disabled by default for least privilege — no ClusterRole is created unless
+# you turn this on. When enabled with the default empty `namespaces: []`, only
+# the release namespace is scraped using a namespace-scoped Role (no cluster
+# permissions at all). Set `namespaces` to a specific list, or `["*"]` for
+# every namespace, to switch to a ClusterRole automatically.
+# ------------------------------------------------------------------------------
+podMonitoring:
+  enabled: false
+  namespaces: []   # [] = release namespace only (Role). ["*"] = all namespaces (ClusterRole).
+
+# ------------------------------------------------------------------------------
 # PROMETHEUS
 # ------------------------------------------------------------------------------
 prometheus:
@@ -154,6 +285,11 @@ prometheus:
     tag: v2.51.0
     pullPolicy: IfNotPresent
 
+  # HA: >1 runs independent, identically-configured replicas each with their
+  # own PVC (StatefulSet volumeClaimTemplates) — no sharding. Every replica
+  # pushes alerts to every Alertmanager replica; see alertmanager.replicaCount
+  # and README "High Availability" for how duplicate notifications are
+  # avoided.
   replicaCount: 1
 
   resources:
@@ -185,6 +321,24 @@ prometheus:
 
   # Append raw scrape_configs to prometheus.yml
   extraScrapeConfigs: []
+
+  # Forward every sample to a remote-write endpoint — Thanos, Mimir, Cortex,
+  # Grafana Cloud, or a central Prometheus. This is the recommended way to
+  # get multi-cluster visibility: point every cluster's Monitoring Pack at the
+  # same remote endpoint and query them together upstream.
+  # NOTE: this is a raw passthrough to Prometheus's native remote_write
+  # config, so field names below must match Prometheus's own schema
+  # (snake_case: basic_auth, write_relabel_configs) — not the camelCase
+  # convention used elsewhere in this values.yaml.
+  remoteWrite: []
+  # - url: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
+  #   basic_auth:
+  #     username: "12345"
+  #     password: "<grafana-cloud-api-key>"
+  #   write_relabel_configs:
+  #     - source_labels: [__name__]
+  #       regex: "probe_.*|ALERTS"
+  #       action: keep
 
   nodeSelector: {}
   tolerations: []
@@ -267,6 +421,27 @@ grafana:
   dashboardLabels: {}
   # grafana_dashboard: "1"
 
+  # ------------------------------------------------------------------------------
+  # PUBLIC STATUS PAGE (optional, disabled by default)
+  #
+  # Lets anonymous visitors view the Website Monitoring Dashboard without
+  # logging in — combine with grafana.ingress to publish a public status
+  # page, the way Better Stack/Atlassian Statuspage-style tools work.
+  #
+  # SECURITY TRADE-OFF: Grafana's anonymous access is org-wide, not scoped to
+  # a single dashboard — anonymous Viewers can browse any dashboard in the
+  # org and run ad-hoc queries against the Prometheus datasource (read-only,
+  # but including target URLs/hostnames you may consider sensitive). This is
+  # NOT Grafana's newer per-dashboard "public dashboards" feature (which is
+  # more tightly scoped but requires a Grafana API call this chart can't make
+  # declaratively via Helm). Only enable this on a Grafana instance that has
+  # no other dashboards/datasources you'd mind being publicly viewable, and
+  # put it behind grafana.ingress with TLS.
+  # ------------------------------------------------------------------------------
+  statusPage:
+    enabled: false
+    orgRole: "Viewer"   # Viewer is the only sane choice; Editor/Admin would be a serious hole
+
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -288,6 +463,10 @@ alertmanager:
     tag: v0.27.0
     pullPolicy: IfNotPresent
 
+  # HA: >1 forms a real gossip cluster (--cluster.peer, via a headless
+  # Service) so duplicate alerts pushed by multiple Prometheus replicas
+  # collapse into a single notification instead of paging once per replica.
+  # Each replica gets its own PVC (StatefulSet volumeClaimTemplates).
   replicaCount: 1
 
   resources:

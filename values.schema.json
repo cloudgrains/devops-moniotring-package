@@ -47,6 +47,23 @@
               "icmp"
             ],
             "description": "Blackbox Exporter probe module to use"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Extra HTTP headers to send, e.g. an API key header"
+          },
+          "bearerToken": {
+            "type": "string",
+            "description": "Sends 'Authorization: Bearer <token>'. Use at most one of headers/bearerToken/basicAuth"
+          },
+          "basicAuth": {
+            "type": "object",
+            "properties": {
+              "username": { "type": "string" },
+              "password": { "type": "string" }
+            },
+            "description": "HTTP Basic Auth credentials"
           }
         },
         "additionalProperties": false
@@ -74,8 +91,29 @@
         "required": ["name", "host"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-          "host": { "type": "string" },
+          "host": {
+            "type": "string",
+            "description": "The domain name to resolve, e.g. example.com — NOT a DNS server"
+          },
+          "recordType": {
+            "type": "string",
+            "enum": ["A", "AAAA", "MX", "TXT", "CNAME", "NS", "SOA", "SRV"],
+            "description": "DNS record type to query (default: A)"
+          },
+          "resolver": {
+            "type": "string",
+            "description": "Override dns.defaultResolver for this target, e.g. 10.0.0.2:53"
+          },
           "interval": { "type": "string", "pattern": "^[0-9]+(s|m|h)$" }
+        }
+      }
+    },
+    "dns": {
+      "type": "object",
+      "properties": {
+        "defaultResolver": {
+          "type": "string",
+          "description": "Default DNS resolver (host:port) used to answer dnsTargets queries"
         }
       }
     },
@@ -130,6 +168,80 @@
           "type": "string",
           "pattern": "^[0-9]+(s|m|h)$",
           "description": "Duration a target must be down before alerting fires, e.g. 2m"
+        },
+        "escalation": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "after": {
+              "type": "string",
+              "pattern": "^[0-9]+(s|m|h)$",
+              "description": "How long a critical alert must stay firing before escalating"
+            }
+          }
+        }
+      }
+    },
+    "slo": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable multi-window multi-burn-rate SLO/error-budget alerting"
+        },
+        "objectivePercent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Target availability objective, e.g. 99.9"
+        },
+        "window": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h|d|w|y)$",
+          "description": "Rolling window used for the error-budget-remaining calculation"
+        }
+      }
+    },
+    "maintenanceWindows": {
+      "type": "array",
+      "description": "Silence notification delivery during planned maintenance (Alertmanager time_intervals)",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "weekdays": { "type": "array", "items": { "type": "string" } },
+          "daysOfMonth": { "type": "array", "items": { "type": "string" } },
+          "months": { "type": "array", "items": { "type": "string" } },
+          "years": { "type": "array", "items": { "type": "string" } },
+          "location": {
+            "type": "string",
+            "description": "IANA timezone name, e.g. UTC, America/New_York"
+          },
+          "times": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+                "end_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "podMonitoring": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Opt-in: scrape annotated pods in-cluster (creates RBAC — see values.yaml)"
+        },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[] = release namespace only (Role). [\"*\"] = all namespaces (ClusterRole)."
         }
       }
     },
@@ -187,6 +299,47 @@
                 { "type": "integer" }
               ]
             }
+          }
+        },
+        "pagerduty": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "routingKey": {
+              "type": "string",
+              "description": "PagerDuty Events API v2 integration key"
+            },
+            "severityLabel": { "type": "string" }
+          }
+        },
+        "opsgenie": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "apiKey": { "type": "string" },
+            "apiUrl": { "type": "string" }
+          }
+        },
+        "webhook": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "url": { "type": "string" },
+            "basicAuth": {
+              "type": "object",
+              "properties": {
+                "username": { "type": "string" },
+                "password": { "type": "string" }
+              }
+            }
+          }
+        },
+        "escalation": {
+          "type": "object",
+          "properties": {
+            "pagerdutyRoutingKey": { "type": "string" },
+            "opsgenieApiKey": { "type": "string" },
+            "webhookUrl": { "type": "string" }
           }
         }
       }
@@ -294,6 +447,10 @@
               "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
             }
           }
+        },
+        "remoteWrite": {
+          "type": "array",
+          "description": "Raw passthrough to Prometheus's native remote_write config (snake_case fields)"
         }
       }
     },
@@ -352,6 +509,16 @@
               "type": "string",
               "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
             }
+          }
+        },
+        "statusPage": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Anonymous org-wide Viewer access — see values.yaml for the security trade-off"
+            },
+            "orgRole": { "type": "string", "enum": ["Viewer"] }
           }
         }
       }

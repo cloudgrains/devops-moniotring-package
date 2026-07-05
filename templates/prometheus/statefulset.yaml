@@ -1,6 +1,6 @@
 {{- if .Values.prometheus.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "monitoring-pack.prometheus.fullname" . }}
   namespace: {{ include "monitoring-pack.namespace" . }}
@@ -13,9 +13,12 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ .Values.prometheus.replicaCount }}
-  # Use Recreate when using RWO PVCs — avoids two pods fighting for the volume
-  strategy:
-    type: Recreate
+  serviceName: {{ include "monitoring-pack.prometheus.fullname" . }}-headless
+  # Independent HA replicas don't need ordered startup/shutdown between them —
+  # Parallel gets a multi-replica install ready faster than the StatefulSet
+  # default (OrderedReady), which would otherwise wait for replica 0 before
+  # even starting replica 1.
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       {{- include "monitoring-pack.prometheus.selectorLabels" . | nindent 6 }}
@@ -106,13 +109,10 @@ spec:
                 path: prometheus.yml
               - key: website-alerts.yml
                 path: rules/website-alerts.yml
+        {{- if not .Values.prometheus.persistence.enabled }}
         - name: data
-          {{- if .Values.prometheus.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "monitoring-pack.prometheus.fullname" . }}
-          {{- else }}
           emptyDir: {}
-          {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.prometheus.nodeSelector }}
@@ -127,4 +127,28 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if .Values.prometheus.persistence.enabled }}
+  # One PVC per replica (prometheus-<n>), not one shared PVC — the previous
+  # Deployment+single-PVC design couldn't safely run more than 1 replica.
+  # Kept even if you scale replicas down/up or delete the StatefulSet
+  # (Kubernetes' long-standing default for volumeClaimTemplates-managed PVCs
+  # is to never auto-delete them, independent of any Helm annotation).
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "monitoring-pack.labels" . | nindent 10 }}
+          app.kubernetes.io/component: prometheus
+        annotations:
+          "helm.sh/resource-policy": keep
+      spec:
+        accessModes:
+          - {{ .Values.prometheus.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.prometheus.persistence.size }}
+        {{- if .Values.prometheus.persistence.storageClass }}
+        storageClassName: {{ .Values.prometheus.persistence.storageClass }}
+        {{- end }}
+  {{- end }}
 {{- end }}

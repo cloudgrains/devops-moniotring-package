@@ -41,8 +41,8 @@ We will:
 - Use Ingress with TLS and authentication middleware (e.g., nginx `auth-basic` or OAuth2-proxy) for any public-facing endpoints
 
 ### RBAC
-- The chart creates a dedicated ServiceAccount with minimal cluster read-only permissions (for Prometheus service discovery)
-- Review `templates/clusterrole.yaml` and restrict to the namespaces you need if possible
+- The chart creates a dedicated ServiceAccount with **no Kubernetes API permissions by default** — probing external websites/SSL/TCP/DNS needs none
+- Optional in-cluster pod discovery (`podMonitoring.enabled: true`) grants a namespace-scoped `Role` by default; only `podMonitoring.namespaces: ["*"]` escalates to a cluster-wide `ClusterRole` with node-level access — see `templates/rbac.yaml` and the README's "RBAC is least-privilege by default" section
 
 ### Updates
 - Monitor the component image tags in `values.yaml` and update them regularly

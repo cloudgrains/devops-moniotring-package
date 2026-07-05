@@ -1,0 +1,91 @@
+{{/*
+RBAC for optional Kubernetes pod auto-discovery (podMonitoring.enabled).
+Nothing is created here at all unless podMonitoring is turned on — Monitoring
+Pack's core job (probing external websites/SSL/TCP/DNS) needs zero Kubernetes
+API access. See values.yaml "KUBERNETES POD AUTO-DISCOVERY" for the modes.
+*/}}
+{{- if and .Values.serviceAccount.create .Values.podMonitoring.enabled }}
+{{- $clusterWide := has "*" .Values.podMonitoring.namespaces }}
+{{- if $clusterWide }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "monitoring-pack.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "monitoring-pack.serviceAccountName" . }}
+    namespace: {{ include "monitoring-pack.namespace" . }}
+{{- else }}
+{{/*
+namespace-scoped mode — one Role+RoleBinding per configured namespace
+(defaults to just the release namespace). No cluster-wide permissions
+are granted; node-level resources are unavailable in this mode.
+*/}}
+{{- $namespaces := .Values.podMonitoring.namespaces }}
+{{- if not $namespaces }}
+{{- $namespaces = list (include "monitoring-pack.namespace" .) }}
+{{- end }}
+{{- range $namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "monitoring-pack.fullname" $ }}
+  namespace: {{ . }}
+  labels:
+    {{- include "monitoring-pack.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "monitoring-pack.fullname" $ }}
+  namespace: {{ . }}
+  labels:
+    {{- include "monitoring-pack.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "monitoring-pack.fullname" $ }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "monitoring-pack.serviceAccountName" $ }}
+    namespace: {{ include "monitoring-pack.namespace" $ }}
+{{- end }}
+{{- end }}
+{{- end }}

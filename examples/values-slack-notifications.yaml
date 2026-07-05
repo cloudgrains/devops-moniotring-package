@@ -60,6 +60,25 @@ notifications:
     password: "your-gmail-app-password"
     requireTLS: true
 
+  # ── PagerDuty ──────────────────────────────────────────────────────────────
+  # 1. Service → Integrations → Add an integration → Events API v2
+  # 2. Copy the integration key
+  pagerduty:
+    enabled: false
+    routingKey: "your-pagerduty-integration-key"
+
+  # ── Opsgenie ───────────────────────────────────────────────────────────────
+  opsgenie:
+    enabled: false
+    apiKey: "your-opsgenie-api-key"
+
+  # ── Generic webhook ────────────────────────────────────────────────────────
+  # For incident tools without a native receiver above (ServiceNow, Jira
+  # Service Management, internal automation, etc.)
+  webhook:
+    enabled: false
+    url: "https://your-tool.example.com/webhook"
+
 # Faster alerting for demo purposes
 alertmanager:
   groupWait: "10s"

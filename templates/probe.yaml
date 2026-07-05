@@ -30,11 +30,48 @@ spec:
     staticConfig:
       static:
         {{- range .Values.targets }}
+        {{- if not (include "monitoring-pack.target.hasAuth" .) }}
         - {{ .url | quote }}
+        {{- end }}
         {{- end }}
       labels:
         probe_type: http
         {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- range .Values.targets }}
+{{- if include "monitoring-pack.target.hasAuth" . }}
+---
+# Authenticated target "{{ .name }}" — the Probe CRD takes one module per
+# resource, so this (and any other custom-module target) needs its own Probe
+# rather than sharing the default "-http" one above.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" $ }}-http-{{ include "monitoring-pack.slug" .name }}
+  namespace: {{ include "monitoring-pack.namespace" $ }}
+  labels:
+    {{- include "monitoring-pack.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with $.Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: {{ default $.Values.probe.interval .interval }}
+  scrapeTimeout: {{ $.Values.probe.scrapeTimeout }}
+  module: "http-auth-{{ include "monitoring-pack.slug" .name }}"
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        - {{ .url | quote }}
+      labels:
+        probe_type: http
+        target_name: {{ .name | quote }}
+        {{- include "monitoring-pack.globalLabels" $ | nindent 8 }}
+{{- end }}
 {{- end }}
 {{- $httpsTargets := list }}
 {{- range .Values.targets }}
@@ -105,6 +142,41 @@ spec:
       labels:
         probe_type: tcp
         {{- include "monitoring-pack.globalLabels" . | nindent 8 }}
+{{- end }}
+{{- range .Values.dnsTargets }}
+---
+# DNS target "{{ .name }}" — one Probe CRD per target because each needs its
+# own module (dns-<name>, generated in the Blackbox Exporter ConfigMap) with
+# query_name hard-coded to the domain being checked. See
+# templates/blackbox/configmap.yaml for why blackbox_exporter requires this.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "monitoring-pack.fullname" $ }}-dns-{{ include "monitoring-pack.slug" .name }}
+  namespace: {{ include "monitoring-pack.namespace" $ }}
+  labels:
+    {{- include "monitoring-pack.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with $.Values.probe.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  interval: {{ default $.Values.probe.interval .interval }}
+  scrapeTimeout: {{ $.Values.probe.scrapeTimeout }}
+  module: "dns-{{ include "monitoring-pack.slug" .name }}"
+  prober:
+    url: {{ $proberUrl }}
+    path: /probe
+    scheme: http
+  targets:
+    staticConfig:
+      static:
+        - {{ default $.Values.dns.defaultResolver .resolver | quote }}
+      labels:
+        probe_type: dns
+        target_name: {{ .name | quote }}
+        instance: {{ .host | quote }}
+        {{- include "monitoring-pack.globalLabels" $ | nindent 8 }}
 {{- end }}
 {{- if .Values.icmpTargets }}
 ---

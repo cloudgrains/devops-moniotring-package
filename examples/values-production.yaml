@@ -18,6 +18,11 @@ targets:
     url: https://admin.example.com
     interval: 60s
     module: http_2xx_no_ssl_verify   # Self-signed cert
+  - name: Internal API
+    url: https://internal-api.example.com/healthz
+    interval: 30s
+    headers:
+      X-API-Key: "YOUR_API_KEY"       # Move to a Secret in real use
 
 tcpTargets:
   - name: PostgreSQL
@@ -47,6 +52,16 @@ alerts:
     critical: 3.0
   downFor: "1m"
 
+  escalation:
+    enabled: true
+    after: "15m"   # Page a secondary on-call if still critical after 15 min
+
+# ── SLO / error budget ────────────────────────────────────────────────────────
+slo:
+  enabled: true
+  objectivePercent: 99.95   # Tighter than the 99.9% default for production
+  window: "30d"
+
 # ── Notifications ─────────────────────────────────────────────────────────────
 notifications:
   slack:
@@ -61,9 +76,24 @@ notifications:
     to: "oncall@example.com"
     username: "alerts@example.com"
     password: "your-app-password"
+  pagerduty:
+    enabled: true
+    routingKey: "YOUR_PAGERDUTY_INTEGRATION_KEY"
+  escalation:
+    pagerdutyRoutingKey: "YOUR_SECONDARY_ONCALL_PAGERDUTY_KEY"
+
+# ── Maintenance windows ───────────────────────────────────────────────────────
+maintenanceWindows:
+  - name: weekly-deploy-window
+    weekdays: ["saturday"]
+    times:
+      - start_time: "02:00"
+        end_time: "04:00"
+    location: "UTC"
 
 # ── Prometheus ────────────────────────────────────────────────────────────────
 prometheus:
+  replicaCount: 2   # HA — each replica gets its own PVC (StatefulSet)
   resources:
     requests:
       memory: "512Mi"
@@ -110,6 +140,7 @@ grafana:
 
 # ── Alertmanager ──────────────────────────────────────────────────────────────
 alertmanager:
+  replicaCount: 2   # HA — forms a real gossip cluster, deduplicates notifications
   resources:
     requests:
       memory: "128Mi"

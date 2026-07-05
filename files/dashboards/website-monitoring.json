@@ -135,7 +135,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(probe_success{job=~\"blackbox-http.*\"})",
+          "expr": "count(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"})",
           "instant": true,
           "refId": "A"
         }
@@ -202,7 +202,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(probe_success{job=~\"blackbox-http.*\"} == 1)",
+          "expr": "count(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"} == 1)",
           "instant": true,
           "refId": "A"
         }
@@ -280,7 +280,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(probe_success{job=~\"blackbox-http.*\"} == 0) or vector(0)",
+          "expr": "count(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"} == 0) or vector(0)",
           "instant": true,
           "refId": "A"
         }
@@ -362,7 +362,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count((probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\"} - time()) / 86400 < 30) or vector(0)",
+          "expr": "count((probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\",instance=~\"$target\"} - time()) / 86400 < 30) or vector(0)",
           "instant": true,
           "refId": "A"
         }
@@ -433,7 +433,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(probe_duration_seconds{job=~\"blackbox-http.*\"})",
+          "expr": "avg(probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"})",
           "instant": true,
           "refId": "A"
         }
@@ -506,7 +506,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(avg_over_time(probe_success{job=~\"blackbox-http.*\"}[24h])) * 100",
+          "expr": "avg(avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[24h])) * 100",
           "instant": true,
           "refId": "A"
         }
@@ -607,7 +607,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_success{job=~\"blackbox-http.*\"}",
+          "expr": "probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -874,7 +874,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_success{job=~\"blackbox-http.*\"}",
+          "expr": "probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "A",
@@ -886,7 +886,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_duration_seconds{job=~\"blackbox-http.*\"}",
+          "expr": "probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "B",
@@ -898,7 +898,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_status_code{job=~\"blackbox-http.*\"}",
+          "expr": "probe_http_status_code{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "C",
@@ -910,7 +910,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\"} - time()) / 86400",
+          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\",instance=~\"$target\"} - time()) / 86400",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "D",
@@ -922,7 +922,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_tls_version_info{job=~\"blackbox-http.*\"}",
+          "expr": "probe_tls_version_info{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "instant": true,
           "legendFormat": "{{instance}} \u2014 {{version}}",
           "refId": "E",
@@ -1018,7 +1018,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_duration_seconds{job=~\"blackbox-http.*\"}",
+          "expr": "probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -1093,7 +1093,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"resolve\"}",
+          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"resolve\",instance=~\"$target\"}",
           "legendFormat": "DNS: {{instance}}",
           "refId": "A"
         },
@@ -1102,7 +1102,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"connect\"}",
+          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"connect\",instance=~\"$target\"}",
           "legendFormat": "TCP: {{instance}}",
           "refId": "B"
         },
@@ -1111,7 +1111,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"tls\"}",
+          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"tls\",instance=~\"$target\"}",
           "legendFormat": "TLS: {{instance}}",
           "refId": "C"
         },
@@ -1120,7 +1120,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"processing\"}",
+          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"processing\",instance=~\"$target\"}",
           "legendFormat": "Server: {{instance}}",
           "refId": "D"
         },
@@ -1129,7 +1129,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"transfer\"}",
+          "expr": "probe_http_duration_seconds{job=~\"blackbox-http.*\",phase=\"transfer\",instance=~\"$target\"}",
           "legendFormat": "Transfer: {{instance}}",
           "refId": "E"
         }
@@ -1221,7 +1221,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\"} - time()) / 86400",
+          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\",instance=~\"$target\"} - time()) / 86400",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "A"
@@ -1305,7 +1305,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\"} - time()) / 86400",
+          "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox-ssl\",instance=~\"$target\"} - time()) / 86400",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -1441,7 +1441,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_tls_version_info{job=~\"blackbox-http.*\"}",
+          "expr": "probe_tls_version_info{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "A"
@@ -1515,7 +1515,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_dns_lookup_time_seconds{job=~\"blackbox-http.*\"}",
+          "expr": "probe_dns_lookup_time_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -1619,7 +1619,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "probe_success{job=~\"blackbox-http.*\"}",
+          "expr": "probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -1792,7 +1792,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\"}[1h]) * 100",
+          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[1h]) * 100",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "A",
@@ -1804,7 +1804,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\"}[6h]) * 100",
+          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[6h]) * 100",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "B",
@@ -1816,7 +1816,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\"}[24h]) * 100",
+          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[24h]) * 100",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "C",
@@ -1828,7 +1828,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\"}[7d]) * 100",
+          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[7d]) * 100",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "D",
@@ -1840,7 +1840,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\"}[30d]) * 100",
+          "expr": "avg_over_time(probe_success{job=~\"blackbox-http.*\",instance=~\"$target\"}[30d]) * 100",
           "instant": true,
           "legendFormat": "{{instance}}",
           "refId": "E",
@@ -1937,7 +1937,7 @@
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "probe_success{job=\"blackbox-tcp\"}",
+              "expr": "probe_success{job=\"blackbox-tcp\",instance=~\"$target\"}",
               "legendFormat": "{{instance}}",
               "refId": "A"
             }
@@ -2005,7 +2005,7 @@
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "probe_dns_lookup_time_seconds{job=\"blackbox-dns\"}",
+              "expr": "probe_dns_lookup_time_seconds{job=~\"blackbox-dns.*\",instance=~\"$target\"}",
               "legendFormat": "{{instance}}",
               "refId": "A"
             }
@@ -2073,11 +2073,416 @@
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "probe_duration_seconds{job=\"blackbox-icmp\"}",
+              "expr": "probe_duration_seconds{job=\"blackbox-icmp\",instance=~\"$target\"}",
               "legendFormat": "{{instance}}",
               "refId": "A"
             }
           ]
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 86,
+        "w": 24,
+        "h": 1
+      },
+      "id": 108,
+      "title": "\ud83c\udfaf  SLO & Error Budget",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Remaining error budget against the configured SLO objective (slo.objectivePercent, default 99.9%) over the slo.window (default 30d). 100% = no errors consumed; 0% = objective exactly met; negative = objective missed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "min": -100,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 25
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 75
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 87
+      },
+      "id": 109,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "valueSize": 30
+        }
+      },
+      "title": "Error Budget Remaining (Now)",
+      "type": "gauge",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "instance:slo_error_budget_remaining:ratio{instance=~\"$target\"} * 100",
+          "instant": true,
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Trend of error budget consumption. A steady downward slope indicates ongoing degradation even if the site isn't fully down.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 87
+      },
+      "id": 110,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "asc"
+        }
+      },
+      "title": "Error Budget Remaining Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "instance:slo_error_budget_remaining:ratio{instance=~\"$target\"} * 100",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Sorted worst-first so the target closest to breaching its SLO always surfaces at the top \u2014 a quick root-cause triage view.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 25
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 75
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/Availability.*/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/Budget Remaining/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 95
+      },
+      "id": 111,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "Budget Remaining %"
+          }
+        ]
+      },
+      "title": "SLO Compliance \u2014 Rolling Window (worst first)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "instance:probe_success:ratio_rate_window{instance=~\"$target\"} * 100",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Availability %",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "instance:slo_error_budget_remaining:ratio{instance=~\"$target\"} * 100",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Budget Remaining %",
+          "refId": "B"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 103,
+        "w": 24,
+        "h": 1
+      },
+      "id": 112,
+      "title": "\ud83d\udcf6  Latency Percentiles",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "p50/p95/p99 computed over each target's own probe history (quantile_over_time) \u2014 blackbox_exporter reports one sample per scrape rather than a histogram, so percentiles are taken across time rather than across a single scrape's distribution.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 104
+      },
+      "id": 113,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Response Latency Percentiles (p50 / p95 / p99, 1h window)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "quantile_over_time(0.50, probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}[1h])",
+          "legendFormat": "p50 \u2014 {{instance}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "quantile_over_time(0.95, probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}[1h])",
+          "legendFormat": "p95 \u2014 {{instance}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "quantile_over_time(0.99, probe_duration_seconds{job=~\"blackbox-http.*\",instance=~\"$target\"}[1h])",
+          "legendFormat": "p99 \u2014 {{instance}}",
+          "refId": "C"
         }
       ]
     }
@@ -2092,7 +2497,30 @@
     "sre"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "target",
+        "type": "query",
+        "label": "Target",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(probe_success, instance)",
+          "refId": "target-variable"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": ".*",
+        "sort": 1
+      }
+    ]
   },
   "time": {
     "from": "now-24h",

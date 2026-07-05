@@ -21,6 +21,12 @@ data:
       smtp_require_tls: {{ .Values.notifications.email.requireTLS }}
       {{- end }}
 
+    {{- if .Values.maintenanceWindows }}
+    # ── Maintenance windows ───────────────────────────────────────────────────
+    time_intervals:
+      {{- include "monitoring-pack.timeIntervals" . | nindent 6 }}
+    {{- end }}
+
     # ── Routing tree ───────────────────────────────────────────────────────────
     route:
       group_by: {{ toJson .Values.alertmanager.groupBy }}
@@ -29,22 +35,35 @@ data:
       repeat_interval: {{ .Values.alertmanager.repeatInterval }}
       receiver: default
       routes:
+        {{- if .Values.alerts.escalation.enabled }}
+        # Escalation — additionally notifies the escalation channel(s) on top
+        # of (continue: true) the normal critical routing below, once a
+        # critical alert has stayed unresolved past alerts.escalation.after.
+        - matchers:
+            - escalation="true"
+          receiver: escalation
+          continue: true
+          {{- include "monitoring-pack.muteTimeIntervals" . | nindent 10 }}
+        {{- end }}
         # Critical alerts — same repeat interval as default (no extra spam)
         - matchers:
             - severity="critical"
           receiver: critical
           repeat_interval: {{ .Values.alertmanager.repeatInterval }}
           continue: false
+          {{- include "monitoring-pack.muteTimeIntervals" . | nindent 10 }}
         # SSL alerts route to their own receiver only — no fallthrough to default
         - matchers:
             - type="ssl"
           receiver: ssl-alerts
           continue: false
+          {{- include "monitoring-pack.muteTimeIntervals" . | nindent 10 }}
         # Warning alerts
         - matchers:
             - severity="warning"
           receiver: default
           continue: false
+          {{- include "monitoring-pack.muteTimeIntervals" . | nindent 10 }}
 
     # ── Inhibition rules ───────────────────────────────────────────────────────
     inhibit_rules:
@@ -65,25 +84,36 @@ data:
     receivers:
 
       - name: default
-        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.slackLikeConfigs" . | nindent 8 }}
         {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
-        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
         {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
         {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.pagerdutyConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.opsgenieConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.webhookConfig" . | nindent 8 }}
 
       - name: critical
-        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.slackLikeConfigs" . | nindent 8 }}
         {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
-        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
         {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
         {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.pagerdutyConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.opsgenieConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.webhookConfig" . | nindent 8 }}
 
       - name: ssl-alerts
-        {{- include "monitoring-pack.slackConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.slackLikeConfigs" . | nindent 8 }}
         {{- include "monitoring-pack.emailConfig" . | nindent 8 }}
-        {{- include "monitoring-pack.discordConfig" . | nindent 8 }}
         {{- include "monitoring-pack.teamsConfig" . | nindent 8 }}
         {{- include "monitoring-pack.telegramConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.pagerdutyConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.opsgenieConfig" . | nindent 8 }}
+        {{- include "monitoring-pack.webhookConfig" . | nindent 8 }}
+
+      {{- if .Values.alerts.escalation.enabled }}
+      - name: escalation
+        {{- include "monitoring-pack.escalationConfigs" . | nindent 8 }}
+      {{- end }}
 
     # ── Notification templates ─────────────────────────────────────────────────
     templates:

@@ -2,20 +2,32 @@
 # These files are useful in the repo but not needed inside the chart archive.
 
 # Git internals
-.git/
-.github/
-.gitignore
+/.git/
+/.github/
+/.gitignore
 
 # CI / lint tooling
-.yamllint.yml
+/.yamllint.yml
 
 # Standalone example values (users download these from the repo, not the package)
-examples/
+/examples/
 
 # Standalone dashboard exports and alert rule files
-# (The chart uses files/ — these extras are for reference only)
-dashboards/
-alert-rules/
+# (The chart uses files/dashboards/ — these extras are for reference only)
+#
+# IMPORTANT: these patterns are anchored to the repo root (leading "/").
+# Without the anchor, .helmignore uses gitignore-style matching, where
+# "dashboards/" matches a directory of that name at ANY depth — silently
+# excluding files/dashboards/ (the one templates/ actually loads via
+# .Files.Get) from every packaged chart. That exact bug shipped for real:
+# Files.Get returned an empty string, so the ConfigMap's dashboard JSON was
+# "", and Grafana logged "failed to load dashboard ... error=EOF" on every
+# provisioning tick — the dashboard silently never appeared. Caught by an
+# actual `helm install` + checking Grafana's dashboard list, not by
+# `helm template`, which shows the ConfigMap structure but not that its
+# value silently rendered empty.
+/dashboards/
+/alert-rules/
 
 # Community / legal docs — already exposed via ArtifactHub from Chart.yaml metadata
 CONTRIBUTING.md

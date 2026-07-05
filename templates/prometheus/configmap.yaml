@@ -18,6 +18,13 @@ data:
         cluster: {{ .Release.Name | quote }}
         namespace: {{ include "monitoring-pack.namespace" . | quote }}
 
+    {{- if .Values.prometheus.remoteWrite }}
+    # Forward samples upstream — Thanos, Mimir, Cortex, Grafana Cloud, or a
+    # central Prometheus for multi-cluster visibility and long-term storage.
+    remote_write:
+      {{- toYaml .Values.prometheus.remoteWrite | nindent 6 }}
+    {{- end }}
+
     # Alert rules loaded from the rules directory
     rule_files:
       - /etc/prometheus/rules/*.yml
@@ -27,7 +34,16 @@ data:
       alertmanagers:
         - static_configs:
             - targets:
+                {{- if gt (.Values.alertmanager.replicaCount | int) 1 }}
+                # HA: push to every Alertmanager replica individually (not a
+                # load-balanced Service) — each independently decides whether
+                # to notify, deduplicating via their gossip cluster state.
+                {{- range $i := until (int .Values.alertmanager.replicaCount) }}
+                - "{{ include "monitoring-pack.alertmanager.fullname" $ }}-{{ $i }}.{{ include "monitoring-pack.alertmanager.fullname" $ }}-headless.{{ include "monitoring-pack.namespace" $ }}.svc:{{ $.Values.alertmanager.service.port }}"
+                {{- end }}
+                {{- else }}
                 - {{ include "monitoring-pack.alertmanager.address" . }}
+                {{- end }}
           timeout: 10s
           api_version: v2
 
@@ -61,7 +77,8 @@ data:
       {{- range .Values.targets }}
       {{- $isDefaultModule := or (not .module) (eq .module "http_2xx") }}
       {{- $isDefaultInterval := or (not .interval) (eq .interval $.Values.prometheus.scrapeInterval) }}
-      {{- if and $isDefaultModule $isDefaultInterval }}
+      {{- $hasAuth := include "monitoring-pack.target.hasAuth" . }}
+      {{- if and $isDefaultModule $isDefaultInterval (not $hasAuth) }}
       {{- $defaultTargets = append $defaultTargets .url }}
       {{- end }}
       {{- end }}
@@ -86,18 +103,23 @@ data:
             replacement: {{ include "monitoring-pack.blackbox.address" . }}
       {{- end }}
 
-      {{- /* Per-target jobs for custom module OR custom interval */}}
+      {{- /* Per-target jobs for custom module, custom interval, OR authenticated targets */}}
       {{- range .Values.targets }}
       {{- $isDefaultModule := or (not .module) (eq .module "http_2xx") }}
       {{- $isDefaultInterval := or (not .interval) (eq $.Values.prometheus.scrapeInterval .interval) }}
-      {{- if not (and $isDefaultModule $isDefaultInterval) }}
-      - job_name: blackbox-http-{{ .name | lower | replace " " "-" }}
+      {{- $hasAuth := include "monitoring-pack.target.hasAuth" . }}
+      {{- if or (not (and $isDefaultModule $isDefaultInterval)) $hasAuth }}
+      - job_name: blackbox-http-{{ include "monitoring-pack.slug" .name }}
         metrics_path: /probe
         {{- if and .interval (ne .interval $.Values.prometheus.scrapeInterval) }}
         scrape_interval: {{ .interval }}
         {{- end }}
         params:
+          {{- if $hasAuth }}
+          module: ["http-auth-{{ include "monitoring-pack.slug" .name }}"]
+          {{- else }}
           module: [{{ default "http_2xx" .module }}]
+          {{- end }}
         static_configs:
           - targets:
               - {{ .url | quote }}
@@ -163,25 +185,32 @@ data:
       {{- end }}
 
       # ── DNS probes ───────────────────────────────────────────────────────────
+      # One job per target: each queries dns.defaultResolver (or a per-target
+      # override) using a dedicated module (dns-<name>, generated in the
+      # Blackbox Exporter ConfigMap) that hard-codes query_name to the actual
+      # domain being checked. The "instance" label is relabeled to the domain
+      # name so dashboards/alerts read naturally instead of showing resolver IPs.
       {{- if and .Values.blackboxExporter.enabled .Values.dnsTargets }}
-      - job_name: blackbox-dns
+      {{- range .Values.dnsTargets }}
+      - job_name: blackbox-dns-{{ include "monitoring-pack.slug" .name }}
         metrics_path: /probe
+        {{- if .interval }}
+        scrape_interval: {{ .interval }}
+        {{- end }}
         params:
-          module: [dns_check]
+          module: [dns-{{ include "monitoring-pack.slug" .name }}]
         static_configs:
           - targets:
-            {{- range .Values.dnsTargets }}
-              - {{ .host | quote }}
-            {{- end }}
+              - {{ default $.Values.dns.defaultResolver .resolver | quote }}
             labels:
               probe_type: dns
+              instance: {{ .host | quote }}
         relabel_configs:
           - source_labels: [__address__]
             target_label: __param_target
-          - source_labels: [__param_target]
-            target_label: instance
           - target_label: __address__
-            replacement: {{ include "monitoring-pack.blackbox.address" . }}
+            replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+      {{- end }}
       {{- end }}
 
       # ── ICMP / Ping probes ───────────────────────────────────────────────────
@@ -206,10 +235,22 @@ data:
             replacement: {{ include "monitoring-pack.blackbox.address" . }}
       {{- end }}
 
-      # ── Kubernetes service discovery (optional bonus scrapes) ────────────────
+      # ── Kubernetes service discovery (opt-in bonus scrapes) ──────────────────
+      # Disabled unless podMonitoring.enabled: true — see values.yaml for why
+      # this isn't on by default (least-privilege RBAC).
+      {{- if .Values.podMonitoring.enabled }}
       - job_name: kubernetes-pods
         kubernetes_sd_configs:
           - role: pod
+            {{- if and .Values.podMonitoring.namespaces (not (has "*" .Values.podMonitoring.namespaces)) }}
+            namespaces:
+              names:
+                {{- toYaml .Values.podMonitoring.namespaces | nindent 16 }}
+            {{- else if not .Values.podMonitoring.namespaces }}
+            namespaces:
+              names:
+                - {{ include "monitoring-pack.namespace" . }}
+            {{- end }}
         relabel_configs:
           # Only scrape pods with the prometheus.io/scrape annotation
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
@@ -228,6 +269,7 @@ data:
             target_label: kubernetes_namespace
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: kubernetes_pod_name
+      {{- end }}
 
       {{- if .Values.prometheus.extraScrapeConfigs }}
       # ── Extra scrape configs (from values.yaml) ──────────────────────────────

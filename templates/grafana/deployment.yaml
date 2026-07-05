@@ -78,6 +78,16 @@ spec:
               value: console
             - name: GF_LOG_LEVEL
               value: info
+            {{- if .Values.grafana.statusPage.enabled }}
+            # Public status page — see values.yaml "PUBLIC STATUS PAGE" for the
+            # security trade-off before enabling this.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: {{ .Values.grafana.statusPage.orgRole | quote }}
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/website-monitoring.json
+            {{- end }}
           ports:
             - name: http
               containerPort: 3000

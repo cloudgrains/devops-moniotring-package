@@ -102,6 +102,18 @@ spec:
     - ports:
         - port: 9093
           protocol: TCP
+    {{- if gt (.Values.alertmanager.replicaCount | int) 1 }}
+    # Gossip clustering — only from other Alertmanager replicas
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "monitoring-pack.alertmanager.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 9094
+          protocol: TCP
+        - port: 9094
+          protocol: UDP
+    {{- end }}
   egress:
     # Allow outbound HTTPS for notification webhooks (Slack, Discord, Teams, Telegram)
     - ports:
@@ -123,6 +135,18 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+    {{- if gt (.Values.alertmanager.replicaCount | int) 1 }}
+    # Gossip clustering — only to other Alertmanager replicas
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "monitoring-pack.alertmanager.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 9094
+          protocol: TCP
+        - port: 9094
+          protocol: UDP
+    {{- end }}
 {{- end }}
 # ── Blackbox Exporter ─────────────────────────────────────────────────────────
 {{- if .Values.blackboxExporter.enabled }}
@@ -160,17 +184,31 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    # Allow custom TCP port probes (common ports)
+    {{- /*
+    Ports for tcpTargets are derived from the actual configured targets
+    instead of a hardcoded guess-list, so custom ports (8443, 9000, etc.)
+    aren't silently blocked when NetworkPolicy is enabled.
+    */}}
+    {{- $tcpPorts := list }}
+    {{- range .Values.tcpTargets }}
+    {{- $port := regexReplaceAll "^.*:" .host "" }}
+    {{- if and $port (not (has $port $tcpPorts)) }}
+    {{- $tcpPorts = append $tcpPorts $port }}
+    {{- end }}
+    {{- end }}
+    {{- if $tcpPorts }}
     - ports:
-        - port: 22
+        {{- range $tcpPorts }}
+        - port: {{ . | int }}
           protocol: TCP
-        - port: 25
-          protocol: TCP
-        - port: 3306
-          protocol: TCP
-        - port: 5432
-          protocol: TCP
-        - port: 6379
-          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- if .Values.icmpTargets }}
+    # NetworkPolicy v1 cannot match the ICMP protocol, so ICMP egress can't be
+    # scoped to specific ports/protocols like the rules above — this rule
+    # allows all outbound traffic so ping probes keep working. Restrict further
+    # with your CNI's extensions (e.g. Calico GlobalNetworkPolicy) if needed.
+    - {}
+    {{- end }}
 {{- end }}
 {{- end }}

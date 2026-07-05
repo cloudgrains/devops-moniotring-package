@@ -157,7 +157,9 @@ Usage:
         description: "Cannot connect to {{ "{{" }} $labels.instance {{ "}}" }} via TCP."
 
     - alert: DNSResolutionFailed
-      expr: probe_success{job="blackbox-dns"} == 0
+      # DNS targets each get their own job (blackbox-dns-<name>) since each
+      # needs a distinct query_name module — see blackbox/configmap.yaml.
+      expr: probe_success{job=~"blackbox-dns.*"} == 0
       for: 2m
       labels:
         severity: critical
@@ -191,4 +193,107 @@ Usage:
         description: >
           The Blackbox Exporter is unreachable. All website probes have stopped.
           Release: {{ .Release.Name }}, Namespace: {{ include "monitoring-pack.namespace" . }}.
+
+{{- if .Values.alerts.escalation.enabled }}
+
+    # ── Escalation — generic meta-alert over any critical alert ───────────────
+    # Matches Prometheus's own ALERTS metric rather than duplicating this
+    # rule per alert type: any alert with severity="critical" that keeps
+    # firing past alerts.escalation.after gets escalated. label_replace
+    # preserves the original alertname as "original_alertname" because
+    # Prometheus always overwrites the "alertname" label with this rule's
+    # own name ("CriticalAlertEscalation") on the resulting alert.
+    - alert: CriticalAlertEscalation
+      expr: >
+        label_replace(
+          ALERTS{alertstate="firing", severity="critical", alertname!="CriticalAlertEscalation"},
+          "original_alertname", "$1", "alertname", "(.*)"
+        )
+      for: {{ .Values.alerts.escalation.after }}
+      labels:
+        severity: critical
+        type: escalation
+        escalation: "true"
+      annotations:
+        summary: "ESCALATION: {{ "{{" }} $labels.original_alertname {{ "}}" }} unresolved for over {{ .Values.alerts.escalation.after }}"
+        description: >
+          {{ "{{" }} $labels.original_alertname {{ "}}" }} on {{ "{{" }} $labels.instance {{ "}}" }}
+          has remained critical for more than {{ .Values.alerts.escalation.after }} without
+          resolving. Escalating to the secondary on-call channel.
+{{- end }}
+
+{{- if .Values.slo.enabled }}
+{{- $objective := .Values.slo.objectivePercent | float64 }}
+{{- $errorBudget := divf (subf 100.0 $objective) 100.0 }}
+{{- $fastBurnRatio := subf 1.0 (mulf 14.4 $errorBudget) }}
+{{- $slowBurnRatio := subf 1.0 (mulf 6.0 $errorBudget) }}
+
+- name: slo-error-budget
+  interval: 60s
+  rules:
+
+    # ── Rolling success-ratio recording rules ─────────────────────────────────
+    # Multi-window multi-burn-rate alerting (Google SRE workbook method).
+    # Burn-rate multipliers (14.4x / 6x) are the industry-standard values
+    # calibrated for a 30-day SLO window regardless of slo.window below.
+    - record: instance:probe_success:ratio_rate5m
+      expr: avg_over_time(probe_success{job=~"blackbox-http.*"}[5m])
+
+    - record: instance:probe_success:ratio_rate30m
+      expr: avg_over_time(probe_success{job=~"blackbox-http.*"}[30m])
+
+    - record: instance:probe_success:ratio_rate1h
+      expr: avg_over_time(probe_success{job=~"blackbox-http.*"}[1h])
+
+    - record: instance:probe_success:ratio_rate6h
+      expr: avg_over_time(probe_success{job=~"blackbox-http.*"}[6h])
+
+    - record: instance:probe_success:ratio_rate_window
+      expr: avg_over_time(probe_success{job=~"blackbox-http.*"}[{{ .Values.slo.window }}])
+
+    # Error budget remaining, as a fraction of the total {{ .Values.slo.objectivePercent }}%
+    # budget over the {{ .Values.slo.window }} window. 1.0 = full budget, 0 = exhausted,
+    # negative = objective already missed.
+    - record: instance:slo_error_budget_remaining:ratio
+      expr: >
+        1 - ((1 - instance:probe_success:ratio_rate_window) / {{ $errorBudget }})
+
+    # ── Fast burn — page-worthy: ~2 min to fire ───────────────────────────────
+    - alert: ErrorBudgetBurnFast
+      expr: >
+        instance:probe_success:ratio_rate1h < {{ $fastBurnRatio }}
+        and
+        instance:probe_success:ratio_rate5m < {{ $fastBurnRatio }}
+      for: 2m
+      labels:
+        severity: critical
+        type: slo
+      annotations:
+        summary: "Fast error-budget burn: {{ "{{" }} $labels.instance {{ "}}" }}"
+        description: >
+          {{ "{{" }} $labels.instance {{ "}}" }} is burning its {{ .Values.slo.objectivePercent }}%
+          availability error budget at more than 14.4x the sustainable rate
+          (sustained over both the 1h and 5m windows). Left unchecked, this
+          exhausts the entire {{ .Values.slo.window }} error budget in about 2 days.
+        runbook: "Sustained outage or severe degradation — treat like WebsiteDown."
+
+    # ── Slow burn — ticket-worthy: ~15 min to fire ────────────────────────────
+    - alert: ErrorBudgetBurnSlow
+      expr: >
+        instance:probe_success:ratio_rate6h < {{ $slowBurnRatio }}
+        and
+        instance:probe_success:ratio_rate30m < {{ $slowBurnRatio }}
+      for: 15m
+      labels:
+        severity: warning
+        type: slo
+      annotations:
+        summary: "Slow error-budget burn: {{ "{{" }} $labels.instance {{ "}}" }}"
+        description: >
+          {{ "{{" }} $labels.instance {{ "}}" }} is burning its {{ .Values.slo.objectivePercent }}%
+          availability error budget at more than 6x the sustainable rate
+          (sustained over both the 6h and 30m windows). Investigate before it
+          becomes critical.
+        runbook: "Check recent deploys, dependency health, and response-time trends."
+{{- end }}
 {{- end }}

@@ -22,7 +22,11 @@ spec:
       interval: {{ default $.Values.serviceMonitor.interval .interval }}
       scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
       params:
+        {{- if include "monitoring-pack.target.hasAuth" . }}
+        module: ["http-auth-{{ include "monitoring-pack.slug" .name }}"]
+        {{- else }}
         module: [{{ default "http_2xx" .module }}]
+        {{- end }}
       honorLabels: {{ $.Values.serviceMonitor.honorLabels }}
       honorTimestamps: {{ $.Values.serviceMonitor.honorTimestamps }}
       relabelings:
@@ -125,6 +129,50 @@ spec:
           replacement: {{ .host | quote }}
         - sourceLabels: [__param_target]
           targetLabel: instance
+        - targetLabel: __address__
+          replacement: {{ include "monitoring-pack.blackbox.address" $ }}
+        - targetLabel: target_name
+          replacement: {{ .name | quote }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "monitoring-pack.blackbox.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "monitoring-pack.namespace" . }}
+{{- end }}
+{{- if .Values.dnsTargets }}
+---
+# ServiceMonitor for DNS targets
+# Each endpoint queries a real resolver using a per-target module
+# (dns-<name>, generated in the Blackbox Exporter ConfigMap) that hard-codes
+# query_name to the domain being checked — see templates/blackbox/configmap.yaml
+# for why this can't be a single shared module.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "monitoring-pack.fullname" . }}-dns
+  namespace: {{ include "monitoring-pack.namespace" . }}
+  labels:
+    {{- include "monitoring-pack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    {{- range .Values.dnsTargets }}
+    - port: http
+      path: /probe
+      interval: {{ default $.Values.serviceMonitor.interval .interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      params:
+        module: ["dns-{{ include "monitoring-pack.slug" .name }}"]
+      relabelings:
+        - targetLabel: __param_target
+          replacement: {{ default $.Values.dns.defaultResolver .resolver | quote }}
+        - targetLabel: instance
+          replacement: {{ .host | quote }}
         - targetLabel: __address__
           replacement: {{ include "monitoring-pack.blackbox.address" $ }}
         - targetLabel: target_name
